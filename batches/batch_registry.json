@@ -1,0 +1,16 @@
+{
+  "batches": {
+    "insurance": {
+      "id": "insurance",
+      "name": "Insurance",
+      "description": "Document batch created from documents/insurance",
+      "doc_count": 4,
+      "created_at": "2025-09-27T00:09:01.378734",
+      "faiss_path": "batches/insurance/faiss_index",
+      "bm25_path": "batches/insurance/bm25_index.pkl",
+      "metadata_path": "batches/insurance/metadata.json"
+    }
+  },
+  "default_batch": "insurance",
+  "last_modified": "2025-09-27T00:09:01.380894"
+}
