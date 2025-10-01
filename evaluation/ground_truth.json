@@ -1,0 +1,111 @@
+{
+  "test_cases": [
+    {
+      "id": "cancer_definition_001",
+      "query": "What is the definition of major cancer in critical illness coverage?",
+      "company": "aia",
+      "expected_keywords": [
+        "malignant tumor",
+        "cancer",
+        "carcinoma",
+        "malignancy"
+      ],
+      "forbidden_keywords": ["carcinoma in situ", "early stage cancer"],
+      "category": "coverage_definition"
+    },
+    {
+      "id": "waiting_period_001",
+      "query": "What is the waiting period for critical illness coverage?",
+      "company": "great_eastern",
+      "expected_keywords": [
+        "waiting period",
+        "90 days",
+        "days",
+        "commencement"
+      ],
+      "forbidden_keywords": ["immediate coverage", "no waiting period"],
+      "category": "policy_terms"
+    },
+    {
+      "id": "claim_process_001",
+      "query": "How do I make a critical illness claim?",
+      "company": "ntuc_income",
+      "expected_keywords": [
+        "claim form",
+        "medical report",
+        "notification",
+        "submit"
+      ],
+      "forbidden_keywords": ["automatic payout", "no documentation required"],
+      "category": "claims"
+    },
+    {
+      "id": "coverage_amount_001",
+      "query": "What is the maximum coverage amount for critical illness?",
+      "company": "prudential",
+      "expected_keywords": ["coverage", "sum assured", "benefit", "maximum"],
+      "forbidden_keywords": ["unlimited coverage", "no limit"],
+      "category": "benefits"
+    },
+    {
+      "id": "exclusions_001",
+      "query": "What conditions are excluded from critical illness coverage?",
+      "company": "aia",
+      "expected_keywords": [
+        "exclusions",
+        "not covered",
+        "pre-existing",
+        "excluded"
+      ],
+      "forbidden_keywords": ["all conditions covered", "no exclusions"],
+      "category": "exclusions"
+    },
+    {
+      "id": "heart_attack_001",
+      "query": "What is the definition of heart attack in the policy?",
+      "company": "great_eastern",
+      "expected_keywords": [
+        "myocardial infarction",
+        "heart attack",
+        "cardiac",
+        "troponin"
+      ],
+      "forbidden_keywords": ["chest pain", "minor heart condition"],
+      "category": "coverage_definition"
+    },
+    {
+      "id": "cancer_coverage_great_eastern",
+      "query": "What types of cancer are covered?",
+      "company": "great_eastern",
+      "expected_keywords": [
+        "major cancer",
+        "malignant tumor",
+        "invasive cancer"
+      ],
+      "forbidden_keywords": ["all cancers", "any cancer"]
+    },
+    {
+      "id": "claim_process_ntuc_income",
+      "query": "How do I make a critical illness claim?",
+      "company": "ntuc_income",
+      "expected_keywords": ["claim form", "medical report", "diagnosis"],
+      "forbidden_keywords": ["automatic payout", "no documentation required"]
+    },
+    {
+      "id": "payout_amount_prudential",
+      "query": "How much is the payout for critical illness?",
+      "company": "prudential",
+      "expected_keywords": ["sum assured", "benefit amount", "coverage amount"],
+      "forbidden_keywords": ["unlimited", "infinite amount"]
+    }
+  ],
+  "consistency_queries": [
+    "What is the waiting period for critical illness coverage?",
+    "What cancers are covered under critical illness?",
+    "How do I make a critical illness claim?",
+    "What is the survival period requirement?",
+    "Are pre-existing conditions covered?",
+    "What is the definition of major cancer?",
+    "How long do I have to notify about a claim?"
+  ]
+}

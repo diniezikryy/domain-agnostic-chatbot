@@ -9,8 +9,48 @@
       "faiss_path": "batches/insurance/faiss_index",
       "bm25_path": "batches/insurance/bm25_index.pkl",
       "metadata_path": "batches/insurance/metadata.json"
+    },
+    "aia_critical": {
+      "id": "aia_critical",
+      "name": "Aia Critical",
+      "description": "Critical illness documents for aia_critical",
+      "doc_count": 3,
+      "created_at": "2025-10-01T18:43:30.213076",
+      "faiss_path": "batches/aia_critical/faiss_index",
+      "bm25_path": "batches/aia_critical/bm25_index.pkl",
+      "metadata_path": "batches/aia_critical/metadata.json"
+    },
+    "ge_critical": {
+      "id": "ge_critical",
+      "name": "Ge Critical",
+      "description": "Critical illness documents for ge_critical",
+      "doc_count": 3,
+      "created_at": "2025-10-01T18:43:36.326671",
+      "faiss_path": "batches/ge_critical/faiss_index",
+      "bm25_path": "batches/ge_critical/bm25_index.pkl",
+      "metadata_path": "batches/ge_critical/metadata.json"
+    },
+    "income_critical": {
+      "id": "income_critical",
+      "name": "Income Critical",
+      "description": "Critical illness documents for income_critical",
+      "doc_count": 3,
+      "created_at": "2025-10-01T18:43:52.057361",
+      "faiss_path": "batches/income_critical/faiss_index",
+      "bm25_path": "batches/income_critical/bm25_index.pkl",
+      "metadata_path": "batches/income_critical/metadata.json"
+    },
+    "pru_critical": {
+      "id": "pru_critical",
+      "name": "Pru Critical",
+      "description": "Critical illness documents for pru_critical",
+      "doc_count": 3,
+      "created_at": "2025-10-01T18:43:53.760405",
+      "faiss_path": "batches/pru_critical/faiss_index",
+      "bm25_path": "batches/pru_critical/bm25_index.pkl",
+      "metadata_path": "batches/pru_critical/metadata.json"
     }
   },
   "default_batch": "insurance",
-  "last_modified": "2025-09-27T00:09:01.380894"
+  "last_modified": "2025-10-01T18:43:53.771406"
 }

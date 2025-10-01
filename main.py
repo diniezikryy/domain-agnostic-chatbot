@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--list-batches", action="store_true", help="List all available batches")
     parser.add_argument("--batch-info", help="Show information about a specific batch")
     parser.add_argument("--set-default", help="Set default batch for queries")
+    parser.add_argument("--evaluate", action="store_true", help="Run trustworthiness evaluation")
 
     args = parser.parse_args()
 
@@ -59,6 +60,24 @@ def main():
             else:
                 print(f"Batch '{args.batch_info}' not found.")
             return
+
+        # Handle evaluation
+        if args.evaluate:
+            try:
+                from evaluation.trustworthiness_evaluator import TrustworthinessEvaluator
+                query_processor = QueryProcessor(batch_manager)
+                evaluator = TrustworthinessEvaluator(query_processor, batch_manager)
+                
+                print("🔍 Running Trustworthiness Evaluation...")
+                results = evaluator.run_evaluation()
+                evaluator.print_summary(results)
+                return
+            except ImportError:
+                print("Evaluation module not found. Please ensure evaluation/trustworthiness_evaluator.py exists.")
+                return
+            except Exception as e:
+                print(f"Evaluation failed: {e}")
+                return
 
         # Handle setting default batch
         if args.set_default:
