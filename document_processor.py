@@ -50,9 +50,9 @@ class DocumentProcessor:
                         "chunk_count": len(chunks),
                         "file_size_mb": round(Path(doc_path).stat().st_size / (1024 * 1024), 2)
                     })
-                    print(f"  ✓ {len(chunks)} chunks extracted")
+                    print(f"{len(chunks)} chunks extracted")
                 else:
-                    print(f"  ✗ Failed to process {Path(doc_path).name}")
+                    print(f"Failed to process {Path(doc_path).name}")
 
             if not all_chunks:
                 print("No chunks extracted from documents.")
@@ -112,7 +112,7 @@ class DocumentProcessor:
                 "created_at": batch_metadata["created_at"]
             })
 
-            print("✅ Batch created successfully!")
+            print("Batch created successfully!")
             return True
 
         except Exception as e:

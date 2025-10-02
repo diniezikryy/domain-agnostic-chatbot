@@ -68,7 +68,7 @@ def main():
                 query_processor = QueryProcessor(batch_manager)
                 evaluator = TrustworthinessEvaluator(query_processor, batch_manager)
                 
-                print("🔍 Running Trustworthiness Evaluation...")
+                print("Running Trustworthiness Evaluation...")
                 results = evaluator.run_evaluation()
                 evaluator.print_summary(results)
                 return

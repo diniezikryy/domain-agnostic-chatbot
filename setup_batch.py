@@ -78,7 +78,7 @@ def main():
         )
 
         if success:
-            print(f"✅ Batch '{args.batch_name}' created successfully!")
+            print(f"Batch '{args.batch_name}' created successfully!")
 
             # Show batch info
             info = batch_manager.get_batch_info(args.batch_name)
@@ -89,7 +89,7 @@ def main():
             print(f"\nYou can now query this batch with:")
             print(f"  python main.py --batch {args.batch_name} \"your question here\"")
         else:
-            print(f"❌ Failed to create batch '{args.batch_name}'")
+            print(f"Failed to create batch '{args.batch_name}'")
 
     except KeyboardInterrupt:
         print("\nOperation cancelled by user.")
