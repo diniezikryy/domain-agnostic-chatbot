@@ -17,7 +17,7 @@ class SearchIndexBuilder:
     def __init__(self):
         self.embedding_generator = None
 
-    def build_faiss_index(self, chunks: List[str], output_dir: str) -> bool:
+    def build_faiss_index(self, chunks: List[str], metadata: List[Dict], output_dir: str) -> bool:
         """Build FAISS index from text chunks."""
         try:
             import faiss
@@ -54,7 +54,8 @@ class SearchIndexBuilder:
             with open(Path(output_dir) / "index.pkl", 'wb') as f:
                 pickle.dump({
                     'chunks': chunks,
-                    'embeddings': embeddings
+                    'embeddings': embeddings,
+                    'metadata': metadata,
                 }, f)
 
             print(f"FAISS index saved to {output_dir}")
@@ -143,6 +144,7 @@ class HybridSearchEngine:
             with open(chunks_file, 'rb') as f:
                 data = pickle.load(f)
                 self.faiss_chunks = data['chunks']
+                self.faiss_metadata = data.get('metadata', [])
 
             # Initialize embedding generator for query embeddings
             if not self.embedding_generator:
@@ -218,7 +220,8 @@ class HybridSearchEngine:
                         'content': self.faiss_chunks[idx],
                         'score': float(score),
                         'source': 'faiss',
-                        'rank': i
+                        'rank': i,
+                        'metadata': self.faiss_metadata[idx] if hasattr(self, 'faiss_metadata') else {}  # NEW
                     })
 
             return results

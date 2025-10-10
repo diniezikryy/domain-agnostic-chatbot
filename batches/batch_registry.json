@@ -5,12 +5,22 @@
       "name": "Insurance",
       "description": "Document batch created from documents/insurance",
       "doc_count": 4,
-      "created_at": "2025-09-27T00:09:01.378734",
+      "created_at": "2025-10-10T10:26:54.398039",
       "faiss_path": "batches/insurance/faiss_index",
       "bm25_path": "batches/insurance/bm25_index.pkl",
       "metadata_path": "batches/insurance/metadata.json"
+    },
+    "cfo_financials": {
+      "id": "cfo_financials",
+      "name": "Apple Financial Documents",
+      "description": "",
+      "doc_count": 5,
+      "created_at": "2025-10-02T22:39:38.511354",
+      "faiss_path": "batches/cfo_financials/faiss_index",
+      "bm25_path": "batches/cfo_financials/bm25_index.pkl",
+      "metadata_path": "batches/cfo_financials/metadata.json"
     }
   },
   "default_batch": "insurance",
-  "last_modified": "2025-09-27T00:09:01.380894"
+  "last_modified": "2025-10-10T10:26:54.398732"
 }

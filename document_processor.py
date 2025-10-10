@@ -68,6 +68,7 @@ class DocumentProcessor:
             print("Building FAISS index...")
             faiss_success = self.index_builder.build_faiss_index(
                 chunks=all_chunks,
+                metadata=all_metadata,
                 output_dir=str(batch_dir / "faiss_index")
             )
 

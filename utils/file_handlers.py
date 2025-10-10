@@ -45,9 +45,14 @@ class FileHandler:
             # Create metadata for each chunk
             metadata = []
             for i, chunk in enumerate(chunks):
+                # Find which page this chunk belongs to
+                page_num = self._find_page_for_chunk(chunk, text)
+
                 metadata.append({
                     "source": str(file_path),
                     "filename": file_path.name,
+                    "page_number": page_num,  # NEW
+                    "year": self._extract_year_from_filename(file_path.name),  # NEW
                     "chunk_id": i,
                     "chunk_size": len(chunk),
                     "file_type": file_path.suffix.lower()
@@ -59,22 +64,54 @@ class FileHandler:
             print(f"Error processing {file_path.name}: {e}")
             return [], []
 
+    def _find_page_for_chunk(self, chunk: str, full_text: str) -> int:
+        if not hasattr(self, 'page_texts'):
+            return 1
+
+        chunk_start = full_text.find(chunk[:50])
+        if chunk_start == -1:  # Chunk not found
+            return 1
+
+        current_page = 1  # Default value
+        for page_info in self.page_texts:
+            if chunk_start >= page_info['start_pos']:
+                current_page = page_info['page_num']
+            else:
+                break
+
+        return current_page
+
+    def _extract_year_from_filename(self, filename: str) -> int:
+        """Extract year from filename like 'aapl-annual-report-23.pdf'."""
+        import re
+        match = re.search(r'(\d{2,4})', filename)
+        if match:
+            year = int(match.group(1))
+            if year < 100:  # Two digit year
+                year += 2000
+            return year
+        return None
+
     def _extract_pdf_text(self, file_path: Path) -> str:
         """Extract text from PDF file."""
         try:
             import PyPDF2
 
-            text = ""
+            self.page_texts = []  # Store page-by-page text
+            full_text = ""
+
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
+                for page_num, page in enumerate(pdf_reader.pages, start=1):
+                    page_text = page.extract_text()
+                    self.page_texts.append({
+                        'page_num': page_num,
+                        'text': page_text,
+                        'start_pos': len(full_text)
+                    })
+                    full_text += page_text + "\n"
 
-            return self._clean_text(text)
-
-        except ImportError:
-            print("PyPDF2 not installed. Install with: pip install PyPDF2")
-            return ""
+            return self._clean_text(full_text)
         except Exception as e:
             print(f"Error reading PDF {file_path.name}: {e}")
             return ""
