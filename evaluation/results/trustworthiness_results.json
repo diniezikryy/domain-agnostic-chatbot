@@ -1,17 +1,21 @@
 {
-  "timestamp": "2025-10-02 21:35:58",
+  "timestamp": "2025-10-24 14:27:39",
   "total_test_cases": 9,
   "hallucination_test": {
     "avg_hallucination_rate": 0.05555555555555555,
-    "avg_accuracy_rate": 0.7222222222222223,
+    "avg_accuracy_rate": 0.6851851851851852,
     "total_tests": 9,
     "details": [
       {
         "test_id": "cancer_definition_001",
         "company": "aia",
         "query": "What is the definition of major cancer in critical illness coverage?",
-        "response": "The definition of \"Major Cancer\" in the context of critical illness coverage is quite specific. According to the policy documents, Major Cancer includes conditions such as leukemia, lymphoma, and sarcoma. However, it is important to note that certain tumors are excluded from this definition. Specifically, tumors that are classified as pre-malignant, non-invasive, carcinoma-in-situ, or having borderline malignancy do not qualify as Major Cancer for the purposes of a claim.\n\nTo clarify, the policy states: \"The term Major Cancer includes, but is not limited to, leukemia, lymphoma and sarcoma.\" However, it also specifies that \"All tumours which are histologically classified as any of the following: Pre-malignant; Non-invasive; Carcinoma-in-situ (Tis) or Ta; Having borderline malignancy; Having any degree of malignant potential; Having suspicious malignancy; Neoplasm of uncertain or unknown behaviour; or All grades of dysplasia, squamous intraepithelial lesions (HSIL and LSIL) and intraepithelial neoplasia\" are excluded.\n\nAdditionally, it\u2019s worth noting that a Major Cancer diagnosis does not need to be in remission to claim for re-diagnosis, which can be beneficial for policyholders who experience a recurrence.\n\nIn summary, if a diagnosis falls under the specified types of cancer and does not meet the exclusion criteria, it would be considered Major Cancer for coverage purposes. If you have any further questions or need clarification on specific cases, feel free to ask!",
-        "expected_found": ["cancer", "carcinoma", "malignancy"],
+        "response": "The definition of \"Major Cancer\" in the context of critical illness coverage is quite specific. According to the policy documents, \"Major Cancer\" includes conditions such as leukemia, lymphoma, and sarcoma. However, it is important to note that not all tumors are classified as Major Cancer for the purposes of this coverage.\n\nThe policy explicitly states that \"Major Cancer diagnosed on the basis of finding tumour cells and/or tumour-associated molecules in blood, saliva, faeces, urine or any other bodily fluid in the absence of further definitive and clinically verifiable evidence does not meet the above definition.\" Additionally, tumors that are classified as pre-malignant, non-invasive, carcinoma-in-situ, or have borderline malignancy are excluded from the definition of Major Cancer.\n\nTo summarize, Major Cancer is defined as specific types of cancer that meet the criteria outlined in the policy, and certain conditions and classifications are explicitly excluded. If you have any further questions or need clarification on specific types of cancer or conditions, feel free to ask!",
+        "expected_found": [
+          "cancer",
+          "carcinoma",
+          "malignancy"
+        ],
         "forbidden_found": [],
         "hallucination_score": 0.0,
         "accuracy_score": 0.75
@@ -20,8 +24,12 @@
         "test_id": "waiting_period_001",
         "company": "great_eastern",
         "query": "What is the waiting period for critical illness coverage?",
-        "response": "The waiting period for critical illness coverage is 90 days. This means that from the date the policy is issued or reinstated\u2014whichever is later\u2014there is a 90-day period during which you cannot make a claim for certain medical conditions.\n\nTo clarify, the policy states: \"For certain medical conditions, there is a waiting period of 90 days from the date of issue or reinstatement whichever is later.\" Additionally, it\u2019s important to note that there is a survival period that applies before a claim can be made, which means the life assured must survive for at least 7 days from the date of diagnosis before the relevant benefit is payable.\n\nSo, in summary, if you are considering making a claim for critical illness, be aware of this 90-day waiting period as well as the survival requirement. If you have any further questions about specific conditions or claims, feel free to ask!",
-        "expected_found": ["waiting period", "90 days", "days"],
+        "response": "The waiting period for critical illness coverage is 90 days. This period starts from the date of issue or reinstatement of the policy, whichever is later. \n\nTo clarify, this means that if a claim is made for a critical illness that occurs within the first 90 days of the policy being issued or reinstated, the claim will not be honored. Additionally, there is a survival period that applies, which requires the life assured to survive for at least 7 days from the date of diagnosis before any claim can be made.\n\nIn summary, you need to wait 90 days from the policy's start or reinstatement date before you can make a claim for critical illness, and the insured must also survive for at least 7 days post-diagnosis for the claim to be payable.",
+        "expected_found": [
+          "waiting period",
+          "90 days",
+          "days"
+        ],
         "forbidden_found": [],
         "hallucination_score": 0.0,
         "accuracy_score": 0.75
@@ -30,8 +38,11 @@
         "test_id": "claim_process_001",
         "company": "ntuc_income",
         "query": "How do I make a critical illness claim?",
-        "response": "To make a critical illness claim under the PRUActive Protect policy, you'll need to follow a specific process. Here\u2019s a step-by-step guide to help you:\n\n1. **Notify the Company**: As soon as you are aware of a critical illness diagnosis, you must notify the insurance company in writing. The policy states, \"The Policyholder must notify the Company of any claim in writing as soon as it is practicable.\"\n\n2. **Diagnosis by a Medical Practitioner**: The critical illness must be diagnosed by a registered Medical Practitioner. This diagnosis needs to be supported by clinical, radiological, histological, and laboratory evidence that is acceptable to the company.\n\n3. **Gather Medical Evidence**: You will need to provide all necessary medical reports and evidence required for the claim. It's important to note that the cost of these reports will be at the policyholder's expense.\n\n4. **Possible Medical Examination**: If the company requires it, the life assured may need to undergo a medical examination by a practitioner appointed by the company.\n\n5. **Claim Admission**: Once your claim is admitted, the policy will pay out the sum assured in one lump sum and waive all future premiums, allowing you to focus on recovery.\n\nMake sure to keep all documentation organized and submit your claim as soon as possible to avoid any delays. If you have any further questions or need assistance with specific forms, feel free to ask!",
-        "expected_found": ["medical report", "submit"],
+        "response": "To make a critical illness claim under the PRUActive Protect policy, you need to follow a few specific steps. Here\u2019s how it works:\n\n1. **Notify the Company**: You must notify the insurance company of your claim in writing as soon as it is practicable. This is crucial because timely notification helps streamline the claims process.\n\n2. **Diagnosis Requirement**: The critical illness must be diagnosed by a registered Medical Practitioner. This diagnosis needs to be supported by adequate clinical, radiological, histological, and laboratory evidence that is acceptable to the company.\n\n3. **Medical Reports**: You will be responsible for furnishing all medical reports or any other evidence required by the company for the claim. This means you may incur some costs for obtaining these documents.\n\n4. **Possible Medical Examination**: If the company requires it, the life assured may need to undergo a medical examination by a Medical Practitioner appointed by the company.\n\n5. **Claim Admission**: Once your claim is admitted, and if the amount of benefits equals the Basic Sum Assured stated in your policy schedule, all other rights and benefits under the policy will terminate.\n\nIt's important to keep all these steps in mind to ensure a smooth claims process. If you have any further questions or need assistance with specific details, feel free to ask!",
+        "expected_found": [
+          "medical report",
+          "notification"
+        ],
         "forbidden_found": [],
         "hallucination_score": 0.0,
         "accuracy_score": 0.5
@@ -40,8 +51,12 @@
         "test_id": "coverage_amount_001",
         "company": "prudential",
         "query": "What is the maximum coverage amount for critical illness?",
-        "response": "The maximum coverage amount for critical illness under the policies mentioned is up to **S350,000** for early or intermediate critical illnesses. \n\nTo break it down further, the AIA Absolute Critical Cover Protection policy states that it provides coverage for **150 multi-stage critical illnesses**, with a payout of up to **S350,000** for early critical illness or intermediate critical illness. Additionally, there are specific conditions listed, such as **10% of the coverage amount** for certain treatments like angioplasty, which can also affect the overall claim amounts.\n\nIt's important to note that any claims made under the Critical Illness Benefit will reduce the amount of the surrender benefit or maturity benefit, which is also a key factor to consider when evaluating the overall coverage.\n\nIf you have any more questions about specific conditions or how claims might affect other benefits, feel free to ask!",
-        "expected_found": ["coverage", "benefit", "maximum"],
+        "response": "The maximum coverage amount for critical illness under the policy is up to **S350,000** for early and intermediate critical illnesses. This is specified in the AIA Absolute Critical Cover Protection policy, which states, \"Well cover you for 150 multi-stage critical illnesses, with up to S350,000 payout for early critical illness or intermediate critical illness.\"\n\nAdditionally, there are provisions for multiple claims under the ASCC Booster, which allows you to make claims of up to **500% of your coverage amount** after a 12-month waiting period from the last critical illness diagnosis. \n\nIt's important to keep in mind that any claims paid under the Critical Illness Benefit will reduce the amount of the surrender benefit or maturity benefit, as noted in the policy: \"Any claims paid under Critical Illness Benefit will reduce the amount of surrender benefit or maturity benefit.\"\n\nIf you have any more questions or need further clarification on specific aspects of the policy, feel free to ask!",
+        "expected_found": [
+          "coverage",
+          "benefit",
+          "maximum"
+        ],
         "forbidden_found": [],
         "hallucination_score": 0.0,
         "accuracy_score": 0.75
@@ -50,7 +65,7 @@
         "test_id": "exclusions_001",
         "company": "aia",
         "query": "What conditions are excluded from critical illness coverage?",
-        "response": "The answer to your question is **Yes**, there are specific conditions excluded from critical illness coverage as outlined in the policy documents.\n\nHere are the key exclusions:\n\n1. **Self-inflicted injuries or illnesses**: Any critical illness resulting from self-harm is not covered.\n   \n2. **Wilful misuse of drugs and/or alcohol**: If a critical illness is caused by the intentional abuse of substances, it will be excluded.\n\n3. **Pre-existing conditions**: \n   - Any condition that was diagnosed before the effective date of coverage is excluded.\n   - Additionally, if the member received medical treatment or investigations related to a critical illness prior to the effective date, that condition is also excluded.\n\n4. **Specific diseases**: \n   - Acquired Immunodeficiency Syndrome (AIDS), AIDS-related complex, or infection by Human Immunodeficiency Virus (HIV) are not covered.\n   - If a diagnosis of cancer or coronary artery disease is made within 90 days from the commencement date of coverage, it will also be excluded.\n\n5. **Other exclusions**: The policy states that benefits will not be payable for general check-ups, non-medically necessary treatments, or over-the-counter medications, among other things.\n\nTo summarize, the policy clearly outlines that critical illnesses resulting from self-inflicted injuries, substance misuse, pre-existing conditions, and certain specified diseases are excluded from coverage. This is important for anyone considering a claim under this policy to understand.",
+        "response": "Yes, there are specific conditions excluded from critical illness coverage as outlined in the policy documents. Here\u2019s a breakdown of the key exclusions:\n\n1. **Self-inflicted injuries or illnesses**: Any critical illness resulting from self-harm is not covered.\n   \n2. **Wilful misuse of drugs and/or alcohol**: If the critical illness is caused by the intentional misuse of substances, it will be excluded.\n\n3. **Pre-existing conditions**: \n   - Any condition that was diagnosed prior to the effective date of the member's coverage is excluded.\n   - Additionally, if the member received medical treatment or investigations related to the critical illness before the coverage began, that condition will also be excluded.\n\n4. **Specific illnesses**: \n   - Acquired Immunodeficiency Syndrome (AIDS), AIDS-related complex, or infection by Human Immunodeficiency Virus (HIV) are explicitly excluded.\n   - If a diagnosis of cancer or coronary artery disease is made within 90 days of the policy's commencement, it will not be covered.\n\n5. **General exclusions**: The policy also states that benefits will not be payable for:\n   - General medical check-ups or health screenings that are not related to an actual sickness or injury.\n   - Treatments that are not medically necessary, optional, or preventive in nature.\n   - Non-prescribed medications and over-the-counter items, even if recommended by a doctor.\n\nTo summarize, the policy clearly outlines that critical illnesses resulting from self-inflicted injuries, substance misuse, pre-existing conditions, and certain specified illnesses diagnosed shortly after coverage begins are excluded from coverage. It's essential to review these exclusions carefully to understand the limitations of the policy.",
         "expected_found": [
           "exclusions",
           "not covered",
@@ -65,9 +80,15 @@
         "test_id": "heart_attack_001",
         "company": "great_eastern",
         "query": "What is the definition of heart attack in the policy?",
-        "response": "The definition of a heart attack in the policy is referred to as \"Heart Attack of Specified Severity.\" According to the policy, it is defined as the \"death of heart muscle due to ischaemia,\" which must be evidenced by at least three of the following criteria:\n\n1. A history of typical chest pain.\n2. New characteristic electrocardiographic changes, which may include ST elevation or depression, T wave inversion, pathological Q waves, or left bundle branch block.\n3. Elevation of cardiac biomarkers, such as CKMB above generally accepted normal laboratory levels or Cardiac Troponin T or I at 0.5 ng/ml and above.\n4. Imaging evidence of new loss of viable myocardium or new regional wall motion abnormality, with the imaging performed by a cardiologist specified by Income Insurance.\n\nThis definition is crucial for determining claims related to heart attacks under the policy. It emphasizes the need for specific medical evidence and criteria to validate the occurrence of a heart attack.\n\nIf you have any further questions or need clarification on any specific aspect, feel free to ask!",
-        "expected_found": ["heart attack", "cardiac", "troponin"],
-        "forbidden_found": ["chest pain"],
+        "response": "The definition of a heart attack in the policy is referred to as \"Heart Attack of Specified Severity.\" According to the policy, it is defined as the \"death of heart muscle due to ischaemia,\" which must be evidenced by at least three of the following criteria:\n\n1. A history of typical chest pain.\n2. New characteristic electrocardiographic changes, which may include ST elevation or depression, T wave inversion, pathological Q waves, or left bundle branch block.\n3. Elevation of cardiac biomarkers, such as CKMB above normal laboratory levels or Cardiac Troponin T or I at 0.5 ng/ml and above.\n4. Imaging evidence of new loss of viable myocardium or new regional wall motion abnormality, with the imaging performed by a cardiologist specified by Income Insurance.\n\nThis definition is crucial because it outlines the specific medical evidence required to confirm a heart attack for the purposes of making a claim under the policy. \n\nIf you have any further questions about how this definition applies to specific cases or claims, feel free to ask!",
+        "expected_found": [
+          "heart attack",
+          "cardiac",
+          "troponin"
+        ],
+        "forbidden_found": [
+          "chest pain"
+        ],
         "hallucination_score": 0.5,
         "accuracy_score": 0.75
       },
@@ -75,18 +96,23 @@
         "test_id": "cancer_coverage_great_eastern",
         "company": "great_eastern",
         "query": "What types of cancer are covered?",
-        "response": "The types of cancer covered under this policy primarily include Major Cancers such as leukemia, lymphoma, and sarcoma. However, it's important to note that there are specific exclusions that apply to certain types of tumors.\n\nTo clarify, the policy explicitly states that the following are excluded from coverage:\n\n1. **Pre-malignant tumors**: These are not considered Major Cancers.\n2. **Non-invasive tumors**: This includes Carcinoma-in-situ (CIS) classified as Tis or Ta.\n3. **Tumors with borderline malignancy or any degree of malignant potential**: These do not qualify for coverage.\n4. **Neoplasms of uncertain or unknown behavior**: These are also excluded.\n5. **All grades of dysplasia and intraepithelial neoplasia**: Such as squamous intraepithelial lesions (HSIL and LSIL).\n6. **Non-melanoma skin carcinomas**: These are specifically excluded as well.\n\nThe policy defines Major Cancer as including, but not limited to, leukemia, lymphoma, and sarcoma, but does not cover any tumors that fall under the exclusions mentioned above. \n\nIn summary, while Major Cancers are covered, many forms of cancer, particularly those that are pre-malignant or non-invasive, are not. If you have any specific cases or types of cancer in mind, feel free to ask, and I can provide more detailed guidance!",
-        "expected_found": ["major cancer", "malignant tumor"],
+        "response": "The answer to your question about the types of cancer covered under this policy is **partially**. \n\nThe policy specifically covers what is defined as \"Major Cancer,\" which includes conditions like leukemia, lymphoma, and sarcoma. However, it also outlines several exclusions that are important to consider. For instance, all tumors classified as pre-malignant, non-invasive, or carcinoma-in-situ (CIS) are excluded from coverage. This means that if a cancer is diagnosed at an early stage and classified as CIS, it would not be covered unless it is the first occurrence of CIS, and even then, certain types like carcinoma-in-situ of the skin (both melanoma and non-melanoma) are explicitly excluded.\n\nTo clarify, the policy states: \"For the above definition, the following are excluded: All tumours which are histologically classified as any of the following: Pre-malignant; Non-invasive; Carcinoma-in-situ (Tis) or Ta; Having borderline malignancy; Having any degree of malignant potential; Having suspicious malignancy; Neoplasm of uncertain or unknown behaviour.\"\n\nSo, while major cancers like leukemia and lymphoma are covered, many early-stage cancers and specific classifications are not. If you have any specific cases or types of cancer in mind, feel free to ask for more detailed guidance!",
+        "expected_found": [
+          "major cancer"
+        ],
         "forbidden_found": [],
         "hallucination_score": 0.0,
-        "accuracy_score": 0.6666666666666666
+        "accuracy_score": 0.3333333333333333
       },
       {
         "test_id": "claim_process_ntuc_income",
         "company": "ntuc_income",
         "query": "How do I make a critical illness claim?",
-        "response": "To make a critical illness claim under the PRUActive Protect policy, you need to follow a specific process. Here\u2019s a step-by-step guide based on the policy details:\n\n1. **Notify the Company**: You must inform the insurance company about the claim in writing as soon as it is practicable. This is a crucial first step.\n\n2. **Diagnosis Requirement**: The critical illness must be diagnosed by a registered Medical Practitioner. Additionally, the diagnosis needs to be supported by clinical, radiological, histological, and laboratory evidence that is acceptable to the company.\n\n3. **Medical Reports**: You will need to provide all medical reports or any other evidence required by the company for the claim. Please note that the cost of these reports will be at the policyholder's expense.\n\n4. **Possible Medical Examination**: If the company requires it, the life assured may need to undergo a medical examination by a Medical Practitioner appointed by the company.\n\n5. **Claim Admission**: Once a claim is admitted, the benefits will be paid out as a lump sum, and all future premiums will be waived, allowing you to focus on recovery.\n\nIt's important to ensure that you have all the necessary documentation ready and that the claim is submitted promptly. If you have any further questions or need assistance with the documentation, feel free to ask!",
-        "expected_found": ["medical report", "diagnosis"],
+        "response": "To make a critical illness claim under the PRUActive Protect policy, you need to follow a few specific steps:\n\n1. **Notify the Company**: You must inform the insurance company about the claim in writing as soon as it is practicable. This is crucial because timely notification is a requirement outlined in the policy.\n\n2. **Diagnosis Requirement**: The critical illness must be diagnosed by a registered Medical Practitioner. The diagnosis should be supported by clinical, radiological, histological, and laboratory evidence that is acceptable to the company.\n\n3. **Medical Reports**: You will need to provide all necessary medical reports or any other evidence required by the company to support your claim. It's important to note that the costs for these reports will be at the policyholder's expense.\n\n4. **Possible Medical Examination**: If the company requires it, the life assured may need to undergo a medical examination by a Medical Practitioner appointed by the company.\n\n5. **Claim Admission**: Once your claim is admitted and if the amount of benefits equals the Basic Sum Assured stated in your policy schedule, all other rights, options, values, and benefits under the policy will terminate.\n\nIn summary, the process involves notifying the insurer, providing a valid diagnosis and supporting evidence, and potentially undergoing a medical examination. Make sure to keep all documentation organized and readily available to facilitate a smooth claims process. If you have any further questions or need assistance with specific forms, feel free to ask!",
+        "expected_found": [
+          "medical report",
+          "diagnosis"
+        ],
         "forbidden_found": [],
         "hallucination_score": 0.0,
         "accuracy_score": 0.6666666666666666
@@ -95,8 +121,11 @@
         "test_id": "payout_amount_prudential",
         "company": "prudential",
         "query": "How much is the payout for critical illness?",
-        "response": "The payout for critical illness under the PRUActive Protect policy can vary depending on the specific illness and the coverage amount you choose. \n\nHere's a breakdown of how it works:\n\n1. **Coverage Amount**: You can customize your coverage, and the payout for critical illnesses is typically up to 100% of the sum assured. For example, if your sum assured is $50,000, you could receive up to that amount for a critical illness claim.\n\n2. **Multiple Claims**: The policy allows for multiple claims, with a maximum benefit payable of up to 500% of the sum assured. This means if you have a sum assured of $50,000, you could potentially claim up to $250,000 over time, provided you meet the conditions for each claim.\n\n3. **Specific Illnesses**: For certain conditions, like angioplasty or other invasive treatments for coronary artery issues, the payout is 10% of the sum assured, capped at $25,000. For carcinoma in situ of specified organs, the payout is also 10% of the sum assured, but can go up to $150,000 depending on the severity and treatment.\n\n4. **Waiting Period**: It's important to note that the life assured must survive at least 7 days from the date of diagnosis for the benefit to be payable.\n\nIn summary, the payout for critical illness can be substantial, depending on your chosen coverage and the specific illness diagnosed. If you have any more questions about specific scenarios or need further clarification, feel free to ask!",
-        "expected_found": ["sum assured", "coverage amount"],
+        "response": "The payout for critical illness under the PRUActive Protect policy can vary based on the specific illness and the coverage amount you choose. Generally, the policy allows for multiple claims, with a maximum benefit of up to 500% of the sum assured.\n\nFor example, if you have a sum assured of $50,000, you could potentially receive up to $250,000 for critical illness claims, depending on the severity and type of illness. The policy specifies that for certain conditions, like carcinoma in situ, you can claim up to 100% of the coverage amount, while for early-stage conditions, you might receive a 50% payout.\n\nAdditionally, the policy includes a unique feature where the coverage restores to 100% after each claim, allowing you to make multiple claims, provided you meet the waiting period requirements. Specifically, there's a 12-month waiting period for claims of different categories and a 24-month waiting period for claims of the same category.\n\nTo summarize, the payout for critical illness can be substantial, depending on your chosen coverage amount and the specific illnesses diagnosed. If you have any further questions or need assistance with specific scenarios, feel free to ask!",
+        "expected_found": [
+          "sum assured",
+          "coverage amount"
+        ],
         "forbidden_found": [],
         "hallucination_score": 0.0,
         "accuracy_score": 0.6666666666666666
@@ -109,217 +138,227 @@
     "details": {
       "What is the waiting period for critical illness coverage?": {
         "responses": {
-          "critical_illness": "The waiting period for critical illness coverage is 90 days. This period starts from the date of issue or reinstatement of the policy, whichever is later. \n\nTo clarify, this means that if a claim is made for a critical illness, the insured must wait 90 days after the policy is issued or reinstated before they can file that claim. Additionally, there is a survival period of 7 days from the date of diagnosis that must also be satisfied before any benefits can be paid out. \n\nThe policy states: \"For certain medical conditions, there is a waiting period of 90 days from the date of issue or reinstatement whichever is later.\" This ensures that the policy is in effect for a sufficient time before any claims related to critical illnesses can be processed. \n\nIf you have any further questions about this or need clarification on other aspects of the policy, feel free to ask!"
+          "critical_illness": "The waiting period for critical illness coverage is 90 days. This means that for certain medical conditions, you must wait 90 days from the date of issue or reinstatement of the policy\u2014whichever is later\u2014before you can make a claim. \n\nTo clarify, the policy states: \"For certain medical conditions, there is a waiting period of 90 days from the date of issue or reinstatement whichever is later.\" Additionally, it's important to note that there is a survival period requirement, meaning the life assured must survive for at least 7 days from the date of diagnosis before a claim can be made.\n\nIf you have any further questions or need more details about specific conditions or benefits, feel free to ask!"
         },
         "consistency_score": 1.0,
         "response_lengths": {
-          "critical_illness": 875
+          "critical_illness": 704
         }
       },
       "What cancers are covered under critical illness?": {
         "responses": {
-          "critical_illness": "Yes, the policy covers \"Major Cancer\" as one of the critical illnesses. According to the policy information, Major Cancer is explicitly listed among the covered conditions, which allows for claims related to this diagnosis.\n\nTo elaborate, the policy states: \"The life assured can claim up to two instances of cancer after a 5-year Cancer-free Period.\" This means that if a policyholder is diagnosed with Major Cancer, they can potentially make a second claim for cancer after being cancer-free for five years from the completion of treatment for the first instance.\n\nIt's important to note that the policy also outlines certain exclusions, such as claims for cancer diagnosed within 90 days from the commencement date of coverage. Additionally, if a cancer re-diagnosis occurs, it does not need to be in remission to claim for re-diagnosis, which provides some flexibility for policyholders.\n\nIf you have any specific cancers in mind or further questions about the claims process, feel free to ask!"
+          "critical_illness": "Yes, cancers are covered under the critical illness policy, specifically under the category of \"Major Cancer.\" \n\nAccording to the policy documents, \"Major Cancer\" is listed as one of the critical illnesses that can be claimed. The policy states that the life assured can claim for \"up to two instances of cancer after a 5-year Cancer-free Period.\" This means that if a policyholder is diagnosed with Major Cancer, they can make a claim, and if they are diagnosed with cancer again after being cancer-free for five years, they can claim again.\n\nIt\u2019s also important to note that the policy allows for re-diagnosis of Major Cancer without the requirement for it to be in remission at the time of the new diagnosis. This is a significant benefit as it provides coverage even if the cancer returns.\n\nHowever, there are exclusions to be aware of. For instance, any diagnosis of cancer made within 90 days from the commencement date of the member's coverage is excluded. Additionally, pre-existing conditions and self-inflicted injuries are also not covered.\n\nIf you have any more specific questions about the types of cancer or other critical illnesses covered, feel free to ask!"
         },
         "consistency_score": 1.0,
         "response_lengths": {
-          "critical_illness": 998
+          "critical_illness": 1173
         }
       },
       "How do I make a critical illness claim?": {
         "responses": {
-          "critical_illness": "To make a critical illness claim under the PRUActive Protect policy, you need to follow a few specific steps. Here\u2019s a straightforward breakdown:\n\n1. **Notify the Company**: You must notify the insurance company of your claim in writing as soon as it is practicable. This is crucial as it starts the claims process.\n\n2. **Diagnosis Requirement**: The critical illness must be diagnosed by a registered Medical Practitioner. This diagnosis needs to be supported by clinical, radiological, histological, and laboratory evidence that is acceptable to the company.\n\n3. **Medical Reports**: You will need to provide all necessary medical reports or any other evidence required by the company, and this will be at your expense.\n\n4. **Possible Medical Examination**: If the company requires it, the life assured (the person covered by the policy) may need to undergo a medical examination by a practitioner appointed by the company.\n\n5. **Claim Admission**: Once a claim is admitted, the amount of benefits will be equal to the Basic Sum Assured stated in your policy schedule, and coverage will terminate after the claim.\n\nIt's important to keep these steps in mind to ensure a smooth claims process. If you have any further questions or need assistance with specific documentation, feel free to ask!"
+          "critical_illness": "To make a critical illness claim under the PRUActive Protect policy, you need to follow a few specific steps. Here\u2019s how you can do it:\n\n1. **Notify the Company**: As soon as you become aware of a critical illness diagnosis, you must notify the insurance company in writing. The policy states, \"The Policyholder must notify the Company of any claim in writing as soon as it is practicable.\"\n\n2. **Diagnosis Requirement**: The critical illness must be diagnosed by a registered Medical Practitioner. This diagnosis needs to be supported by clinical, radiological, histological, and laboratory evidence that is acceptable to the company.\n\n3. **Provide Medical Evidence**: You will need to furnish all medical reports or any other evidence required by the company for the claim. It's important to note that these costs will be at the Policyholder's expense.\n\n4. **Possible Medical Examination**: If the company requires it, the Life Assured may need to undergo a medical examination by a Medical Practitioner appointed by the company.\n\n5. **Claim Admission**: Once your claim is admitted, the policy will pay out the sum assured in one lump sum, and all future premiums will be waived, allowing you to focus on your recovery.\n\nIt\u2019s essential to ensure that you have all the necessary documentation and evidence ready for a smoother claims process. If you have any further questions or need assistance with specific parts of the claim process, feel free to ask!"
         },
         "consistency_score": 1.0,
         "response_lengths": {
-          "critical_illness": 1294
+          "critical_illness": 1457
         }
       },
       "What is the survival period requirement?": {
         "responses": {
-          "critical_illness": "The survival period requirement for this policy is 90 days. This means that for certain medical conditions, you must wait 90 days from the date of issue or reinstatement (whichever is later) before you can make a claim. \n\nTo clarify, the policy states: \"For certain medical conditions, there is a waiting period of 90 days from the date of issue or reinstatement whichever is later. Survival period is applicable before a claim can be made.\" \n\nThis indicates that if a claim is made before this 90-day period has elapsed, it will not be honored. Additionally, it's important to ensure that the policy remains active and has not been terminated or fully claimed during this time for the benefits to be payable.\n\nIf you have any further questions or need more details about specific conditions or benefits, feel free to ask!"
+          "critical_illness": "The survival period requirement is 90 days. \n\nTo clarify, this means that for certain medical conditions, there is a waiting period of 90 days from the date your policy is issued or reinstated (whichever is later) before you can make a claim. During this survival period, if you were to experience a covered medical condition, you would not be eligible to receive benefits until the 90 days have passed.\n\nThe policy states: \"There is a waiting period of 90 days from the date of issue or reinstatement whichever is later. Survival period is applicable before a claim can be made.\" This emphasizes that the survival period is a prerequisite for any claims related to those specific medical conditions.\n\nIt's also important to note that the policy must remain active (not terminated or fully claimed) for the benefits to be payable. If you have any further questions about specific conditions or how this might affect your claims, feel free to ask!"
         },
         "consistency_score": 1.0,
         "response_lengths": {
-          "critical_illness": 822
+          "critical_illness": 946
         }
       },
       "Are pre-existing conditions covered?": {
         "responses": {
-          "critical_illness": "No, pre-existing conditions are not covered under this policy. \n\nThe policy clearly states that \"Pre-existing conditions which were diagnosed prior to the effective date of the Member's coverage\" are excluded from coverage. Additionally, it defines a pre-existing condition as \"any condition for which a Physician was consulted, for which treatment or medication was prescribed, or for which manifestations of symptoms would have caused a prudent person to seek medical advice at any time prior to his Effective Date of Coverage.\"\n\nThis means that if you had any medical issues or symptoms that led you to seek advice or treatment before your coverage started, those conditions will not be eligible for benefits under this policy. \n\nIt's important to note that this exclusion applies not only to the critical illnesses defined in the policy but also to any related medical conditions that were treated or investigated prior to the effective date. So, if a member has a pre-existing condition, they should be aware that it will impact their coverage for critical illnesses. \n\nIf you have any further questions or need clarification on specific cases, feel free to ask!"
+          "critical_illness": "No, pre-existing conditions are not covered under this policy. \n\nThe policy clearly states that \"Pre-existing conditions which were diagnosed prior to the effective date of the Member's coverage\" are excluded from coverage. Additionally, it specifies that any condition for which a physician was consulted, treatment was prescribed, or symptoms were present prior to the effective date of coverage falls under the definition of a pre-existing condition. \n\nTo put it simply, if you had any health issues or sought medical advice for symptoms before your coverage began, those conditions will not be covered by this policy. This includes critical illnesses that were diagnosed or for which you received treatment prior to the effective date. \n\nIt's important to be aware of these exclusions when considering coverage options. If you have any specific cases or further questions, feel free to ask!"
         },
         "consistency_score": 1.0,
         "response_lengths": {
-          "critical_illness": 1167
+          "critical_illness": 894
         }
       },
       "What is the definition of major cancer?": {
         "responses": {
-          "critical_illness": "Yes, the definition of \"Major Cancer\" in the policy is quite specific. It refers to a malignant tumor that has been positively diagnosed with histological confirmation, characterized by the uncontrolled growth of malignant cells that invade and destroy normal tissue. \n\nTo clarify further, the term \"Major Cancer\" includes, but is not limited to, conditions such as leukemia, lymphoma, and sarcoma. However, it\u2019s important to note that certain conditions are explicitly excluded from this definition. For instance, tumors that are classified as pre-malignant, non-invasive, or carcinoma-in-situ (among others) do not qualify as Major Cancer under this policy.\n\nAdditionally, a diagnosis based solely on the presence of tumor cells or tumor-associated molecules in bodily fluids\u2014without further definitive and clinically verifiable evidence\u2014does not meet the definition of Major Cancer. \n\nSo, in summary, for a cancer to be classified as \"Major Cancer,\" it must be a malignant tumor confirmed through histological diagnosis, not just any abnormal finding. If you have any specific cases or examples in mind, feel free to share, and I can help clarify further!"
+          "critical_illness": "Yes, the definition of \"Major Cancer\" is clearly outlined in the policy documents. \n\nAccording to the policy, Major Cancer is defined as \"a malignant tumour positively diagnosed with histological confirmation and characterized by the uncontrolled growth of malignant cells with invasion and destruction of normal tissue.\" This definition specifically includes types of cancer such as leukemia, lymphoma, and sarcoma.\n\nIt's important to note that certain conditions are excluded from this definition. For example, cancers that are classified as pre-malignant, non-invasive, or carcinoma-in-situ do not qualify as Major Cancer. Additionally, diagnoses based solely on the presence of tumor cells or tumor-associated molecules in bodily fluids\u2014without definitive histological confirmation\u2014do not meet the criteria for Major Cancer.\n\nTo summarize, for a cancer to be classified as Major Cancer under this policy, it must be a malignant tumor confirmed by histology, and it must involve the invasion and destruction of normal tissue."
         },
         "consistency_score": 1.0,
         "response_lengths": {
-          "critical_illness": 1158
+          "critical_illness": 1028
         }
       },
       "How long do I have to notify about a claim?": {
         "responses": {
-          "critical_illness": "You have a couple of different timeframes to notify us about a claim, depending on the type of claim you're making.\n\n1. **For most claims**: You must notify us and submit all relevant documents within **30 days** after the date of the loss. The policy states, \"Such claim submission and proof of loss must be filed with us within 30 days after the date of such loss.\" If you have a valid reason for the delay, we may not reject the claim, but you\u2019ll need to provide evidence of that reason.\n\n2. **For accidental death or accidental total and permanent disability (TPD) claims**: The same **30-day** notification rule applies. You must inform us and provide the necessary documents within **30 days after the insured's accidental death or accidental TPD**.\n\n3. **For other benefits**: You have a longer timeframe of **six months** to notify us and submit all relevant documents following the diagnosis or event that gives rise to the claim. The policy specifies, \"If we are not told of the claim or have not received all relevant documents within six months, we will not reject the claim if you have a valid reason for the delay.\"\n\n4. **Final note**: Regardless of the type of claim, if we are not notified within **two years** from the date of the event, we will not pay the claim at all.\n\nSo, in summary, for most claims, you have **30 days** to notify us, while for other benefits, you have **six months**. Just remember that if there\u2019s a valid reason for any delay, you\u2019ll need to demonstrate that to us. If you have any more questions or need further clarification, feel free to ask!"
+          "critical_illness": "You have a couple of timeframes to keep in mind when notifying us about a claim, depending on the type of claim you're dealing with.\n\n1. **For general claims**: You need to notify us and submit all relevant documents within **30 days** after the date of the loss. If you miss this deadline, we won't automatically reject your claim, but you'll need to provide a valid reason for the delay. The policy states, \"If we are not told of the claim or have not received all relevant documents within thirty days, we will not reject the claim if you have a valid reason for the delay.\"\n\n2. **For claims related to accidental death or total and permanent disability (TPD)**: The same 30-day notification rule applies. You must inform us and provide the necessary documents within **30 days** after the event.\n\n3. **For other benefits**: You have a longer timeframe of **six months** after the diagnosis or the event giving rise to the claim to notify us and submit the relevant documents. Again, if you miss this deadline, we won't reject your claim if you can show a valid reason for the delay.\n\n4. **Final note**: It's crucial to remember that if we are not notified of the claim or do not receive all relevant documents within **two years** from the date of the event, we will not pay the claim, regardless of the circumstances.\n\nSo, in summary, for most claims, aim to notify us within 30 days, and for other benefits, you have six months. If you have any further questions or need clarification, feel free to ask!"
         },
         "consistency_score": 1.0,
         "response_lengths": {
-          "critical_illness": 1587
+          "critical_illness": 1509
         }
       }
     }
   },
   "citation_test": {
-    "citation_rate": 0.5555555555555556,
-    "avg_citation_quality": 0.3888888888888889,
+    "citation_rate": 0.4444444444444444,
+    "avg_citation_quality": 0.3333333333333333,
     "total_responses": 9,
     "details": [
       {
         "test_id": "cancer_definition_001",
         "has_citation": true,
-        "citations_found": ["according to", "policy states"],
+        "citations_found": [
+          "according to",
+          "policy states"
+        ],
         "citation_quality": 1.0,
-        "response_length": 1267
+        "response_length": 1247
       },
       {
         "test_id": "waiting_period_001",
         "has_citation": false,
         "citations_found": [],
         "citation_quality": 0.0,
-        "response_length": 774
+        "response_length": 882
       },
       {
         "test_id": "claim_process_001",
-        "has_citation": true,
-        "citations_found": ["policy states"],
-        "citation_quality": 0.5,
-        "response_length": 1473
-      },
-      {
-        "test_id": "coverage_amount_001",
         "has_citation": false,
         "citations_found": [],
         "citation_quality": 0.0,
-        "response_length": 1137
+        "response_length": 1556
+      },
+      {
+        "test_id": "coverage_amount_001",
+        "has_citation": true,
+        "citations_found": [
+          "based on"
+        ],
+        "citation_quality": 0.5,
+        "response_length": 1173
       },
       {
         "test_id": "exclusions_001",
         "has_citation": false,
         "citations_found": [],
         "citation_quality": 0.0,
-        "response_length": 1843
+        "response_length": 1548
       },
       {
         "test_id": "heart_attack_001",
         "has_citation": true,
-        "citations_found": ["according to"],
+        "citations_found": [
+          "according to"
+        ],
         "citation_quality": 0.5,
-        "response_length": 1076
+        "response_length": 1020
       },
       {
         "test_id": "cancer_coverage_great_eastern",
         "has_citation": true,
-        "citations_found": ["according to", "policy states"],
+        "citations_found": [
+          "according to",
+          "policy states"
+        ],
         "citation_quality": 1.0,
-        "response_length": 1300
+        "response_length": 1303
       },
       {
         "test_id": "claim_process_ntuc_income",
         "has_citation": false,
         "citations_found": [],
         "citation_quality": 0.0,
-        "response_length": 1454
+        "response_length": 1629
       },
       {
         "test_id": "payout_amount_prudential",
-        "has_citation": true,
-        "citations_found": ["based on"],
-        "citation_quality": 0.5,
-        "response_length": 1167
+        "has_citation": false,
+        "citations_found": [],
+        "citation_quality": 0.0,
+        "response_length": 1090
       }
     ]
   },
   "response_quality_test": {
-    "avg_response_time": 8.118423302968344,
-    "avg_word_count": 196.88888888888889,
-    "avg_completeness_score": 0.6574074074074074,
+    "avg_response_time": 6.153235514958699,
+    "avg_word_count": 199.88888888888889,
+    "avg_completeness_score": 0.6666666666666667,
     "details": [
       {
         "test_id": "cancer_definition_001",
-        "response_length": 1313,
-        "response_time": 5.526561260223389,
-        "word_count": 193,
+        "response_length": 1172,
+        "response_time": 4.9836084842681885,
+        "word_count": 174,
         "has_specific_info": false,
         "completeness_score": 0.75
       },
       {
         "test_id": "waiting_period_001",
-        "response_length": 837,
-        "response_time": 7.177072286605835,
-        "word_count": 141,
+        "response_length": 854,
+        "response_time": 4.133166551589966,
+        "word_count": 147,
         "has_specific_info": true,
         "completeness_score": 0.75
       },
       {
         "test_id": "claim_process_001",
-        "response_length": 1616,
-        "response_time": 9.892295360565186,
-        "word_count": 255,
+        "response_length": 1673,
+        "response_time": 6.753401041030884,
+        "word_count": 269,
         "has_specific_info": false,
-        "completeness_score": 0.5
+        "completeness_score": 0.25
       },
       {
         "test_id": "coverage_amount_001",
-        "response_length": 889,
-        "response_time": 6.065754413604736,
-        "word_count": 140,
+        "response_length": 918,
+        "response_time": 4.123865842819214,
+        "word_count": 144,
         "has_specific_info": true,
         "completeness_score": 0.75
       },
       {
         "test_id": "exclusions_001",
-        "response_length": 1653,
-        "response_time": 9.830495119094849,
-        "word_count": 247,
+        "response_length": 1800,
+        "response_time": 11.579903602600098,
+        "word_count": 265,
         "has_specific_info": true,
         "completeness_score": 0.75
       },
       {
         "test_id": "heart_attack_001",
-        "response_length": 992,
-        "response_time": 7.572122573852539,
-        "word_count": 158,
+        "response_length": 1098,
+        "response_time": 5.203954219818115,
+        "word_count": 180,
         "has_specific_info": false,
         "completeness_score": 0.75
       },
       {
         "test_id": "cancer_coverage_great_eastern",
-        "response_length": 1274,
-        "response_time": 10.24135971069336,
-        "word_count": 190,
+        "response_length": 1293,
+        "response_time": 6.834671974182129,
+        "word_count": 198,
         "has_specific_info": false,
-        "completeness_score": 0.3333333333333333
+        "completeness_score": 0.6666666666666666
       },
       {
         "test_id": "claim_process_ntuc_income",
-        "response_length": 1485,
-        "response_time": 7.88300895690918,
-        "word_count": 240,
+        "response_length": 1397,
+        "response_time": 5.667640686035156,
+        "word_count": 221,
         "has_specific_info": false,
         "completeness_score": 0.6666666666666666
       },
       {
         "test_id": "payout_amount_prudential",
-        "response_length": 1276,
-        "response_time": 8.877140045166016,
-        "word_count": 208,
+        "response_length": 1245,
+        "response_time": 6.098907232284546,
+        "word_count": 201,
         "has_specific_info": true,
         "completeness_score": 0.6666666666666666
       }
     ]
   },
-  "overall_trustworthiness_score": 0.8129629629629631
+  "overall_trustworthiness_score": 0.787962962962963
 }

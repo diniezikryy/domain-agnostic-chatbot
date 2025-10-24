@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-10-24 14:26:28",
+  "total_test_cases": 9,
+  "retrieval_metrics": {
+    "hit_rate": 1.0,
+    "mean_reciprocal_rank": 0.7962962962962963,
+    "precision_at_5": 0.7555555555555554,
+    "recall_at_5": 0.9166666666666666,
+    "total_queries": 9
+  },
+  "generation_metrics": {
+    "relevancy_score": 0.75,
+    "faithfulness_score": 0.9444444444444444,
+    "total_responses": 9
+  },
+  "overall_metrics": {
+    "overall_rag_score": 0.8642592592592591,
+    "retrieval_score": 0.8671296296296296,
+    "generation_score": 0.8472222222222222
+  }
+}

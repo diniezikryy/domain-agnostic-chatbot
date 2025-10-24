@@ -64,16 +64,15 @@ def main():
         # Handle evaluation
         if args.evaluate:
             try:
-                from evaluation.trustworthiness_evaluator import TrustworthinessEvaluator
-                query_processor = QueryProcessor(batch_manager)
-                evaluator = TrustworthinessEvaluator(query_processor, batch_manager)
+                from evaluation.combined_evaluator import CombinedEvaluator
                 
-                print("Running Trustworthiness Evaluation...")
-                results = evaluator.run_evaluation()
-                evaluator.print_summary(results)
+                query_processor = QueryProcessor(batch_manager)
+                evaluator = CombinedEvaluator(query_processor, batch_manager)
+                
+                results = evaluator.run_complete_evaluation()
                 return
-            except ImportError:
-                print("Evaluation module not found. Please ensure evaluation/trustworthiness_evaluator.py exists.")
+            except ImportError as e:
+                print(f"Evaluation module not found: {e}")
                 return
             except Exception as e:
                 print(f"Evaluation failed: {e}")
