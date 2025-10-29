@@ -1,0 +1,26 @@
+{
+  "queries": [
+    {
+      "id": "custom_001",
+      "query": "What are the key differences between term life and whole life insurance?",
+      "category": "insurance_basics",
+      "expected_keywords": ["term life", "whole life", "coverage", "premium"],
+      "notes": "User-defined query - general insurance comparison"
+    },
+    {
+      "id": "custom_002",
+      "query": "How does critical illness coverage work with pre-existing conditions?",
+      "category": "policy_terms",
+      "expected_keywords": ["pre-existing", "exclusions", "waiting period"],
+      "notes": "User-defined query - specific coverage scenario"
+    },
+    {
+      "id": "custom_003",
+      "query": "What is the typical claim settlement time for critical illness insurance?",
+      "category": "claims",
+      "expected_keywords": ["claim", "settlement", "processing time"],
+      "notes": "User-defined query - operational question"
+    }
+  ],
+  "_instructions": "Add your custom queries here. Each query should have an 'id' and 'query' field at minimum. Additional fields like 'category', 'expected_keywords', and 'notes' are optional but recommended."
+}

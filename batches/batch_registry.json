@@ -14,13 +14,13 @@
       "id": "critical_illness",
       "name": "Critical Illness",
       "description": "Document batch created from documents/critical_illness",
-      "doc_count": 12,
-      "created_at": "2025-10-02T21:19:52.050202",
+      "doc_count": 4,
+      "created_at": "2025-10-29T13:29:45.475800",
       "faiss_path": "batches/critical_illness/faiss_index",
       "bm25_path": "batches/critical_illness/bm25_index.pkl",
       "metadata_path": "batches/critical_illness/metadata.json"
     }
   },
   "default_batch": "critical_illness",
-  "last_modified": "2025-10-02T21:29:20.071135"
+  "last_modified": "2025-10-29T13:29:45.476777"
 }
