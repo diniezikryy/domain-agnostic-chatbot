@@ -79,6 +79,8 @@ class EmbeddingGenerator:
             return 1536
         elif "text-embedding-3-large" in self.model_name:
             return 3072
+        elif "text-embedding-ada-002" in self.model_name:
+            return 1536
         else:
             # Default fallback
             return 1536

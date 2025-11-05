@@ -1,0 +1,59 @@
+{
+  "experiments": [
+    {
+      "name": "baseline",
+      "description": "Default hybrid search with gpt-4o-mini",
+      "config": {
+        "embedding_model": "text-embedding-3-small",
+        "retrieval_strategy": "hybrid",
+        "use_hyde": false,
+        "use_reranking": false,
+        "generation_model": "gpt-4o-mini"
+      }
+    },
+    {
+      "name": "hyde_enabled",
+      "description": "Baseline + HyDE query synthesis",
+      "config": {
+        "embedding_model": "text-embedding-3-small",
+        "retrieval_strategy": "hybrid",
+        "use_hyde": true,
+        "use_reranking": false,
+        "generation_model": "gpt-4o-mini"
+      }
+    },
+    {
+      "name": "reranking_enabled",
+      "description": "Baseline + CrossEncoder reranking",
+      "config": {
+        "embedding_model": "text-embedding-3-small",
+        "retrieval_strategy": "hybrid",
+        "use_hyde": false,
+        "use_reranking": true,
+        "generation_model": "gpt-4o-mini"
+      }
+    },
+    {
+      "name": "full_pipeline",
+      "description": "HyDE + Reranking + GPT-4o",
+      "config": {
+        "embedding_model": "text-embedding-3-small",
+        "retrieval_strategy": "hybrid",
+        "use_hyde": true,
+        "use_reranking": true,
+        "generation_model": "gpt-4o"
+      }
+    },
+    {
+      "name": "vector_only",
+      "description": "Vector-only retrieval (no BM25)",
+      "config": {
+        "embedding_model": "text-embedding-3-small",
+        "retrieval_strategy": "vector_only",
+        "use_hyde": false,
+        "use_reranking": false,
+        "generation_model": "gpt-4o-mini"
+      }
+    }
+  ]
+}

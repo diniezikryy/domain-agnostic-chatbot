@@ -14,8 +14,9 @@ from pathlib import Path
 class SearchIndexBuilder:
     """Builds FAISS and BM25 search indexes."""
 
-    def __init__(self):
+    def __init__(self, embedding_model: str = None):
         self.embedding_generator = None
+        self.embedding_model = embedding_model
 
     def build_faiss_index(self, chunks: List[str], metadata: List[Dict], output_dir: str) -> bool:
         """Build FAISS index from text chunks."""
@@ -24,7 +25,10 @@ class SearchIndexBuilder:
             from utils.embeddings import EmbeddingGenerator
 
             if not self.embedding_generator:
-                self.embedding_generator = EmbeddingGenerator()
+                if self.embedding_model:
+                    self.embedding_generator = EmbeddingGenerator(model_name=self.embedding_model)
+                else:
+                    self.embedding_generator = EmbeddingGenerator()
 
             print("Generating embeddings for FAISS index...")
             embeddings = self.embedding_generator.generate_embeddings(chunks)
@@ -97,7 +101,7 @@ class SearchIndexBuilder:
 class HybridSearchEngine:
     """Performs hybrid search using both FAISS and BM25."""
 
-    def __init__(self):
+    def __init__(self, retrieval_strategy: str = "hybrid"):
         self.faiss_index = None
         self.faiss_chunks = []
         self.faiss_metadata = []
@@ -105,6 +109,7 @@ class HybridSearchEngine:
         self.bm25_chunks = []
         self.bm25_metadata = []
         self.embedding_generator = None
+        self.retrieval_strategy = retrieval_strategy  # "hybrid", "vector_only", "keyword_only"
 
     def load_indexes(self, faiss_path: str, bm25_path: str) -> bool:
         """Load FAISS and BM25 indexes."""
@@ -183,25 +188,38 @@ class HybridSearchEngine:
             query: Search query string
             top_k: Number of results to return
         """
-        if not self.faiss_index or not self.bm25_index:
-            print("Indexes not loaded")
-            return []
+        if self.retrieval_strategy == "vector_only":
+            if not self.faiss_index:
+                print("FAISS index not loaded")
+                return []
+            return self._faiss_search(query, top_k)
+        
+        elif self.retrieval_strategy == "keyword_only":
+            if not self.bm25_index:
+                print("BM25 index not loaded")
+                return []
+            return self._bm25_search(query, top_k)
+        
+        else:  # hybrid (default)
+            if not self.faiss_index or not self.bm25_index:
+                print("Indexes not loaded")
+                return []
 
-        try:
-            # Get FAISS results (semantic search)
-            faiss_results = self._faiss_search(query, top_k)
+            try:
+                # Get FAISS results (semantic search)
+                faiss_results = self._faiss_search(query, top_k)
 
-            # Get BM25 results (keyword search)
-            bm25_results = self._bm25_search(query, top_k)
+                # Get BM25 results (keyword search)
+                bm25_results = self._bm25_search(query, top_k)
 
-            # Combine and rank results
-            combined_results = self._combine_results(faiss_results, bm25_results, top_k)
+                # Combine and rank results
+                combined_results = self._combine_results(faiss_results, bm25_results, top_k)
 
-            return combined_results
+                return combined_results
 
-        except Exception as e:
-            print(f"Error in hybrid search: {e}")
-            return []
+            except Exception as e:
+                print(f"Error in hybrid search: {e}")
+                return []
 
     def _faiss_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Perform FAISS semantic search."""
