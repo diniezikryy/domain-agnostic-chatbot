@@ -1,0 +1,331 @@
+{
+  "user_id": "SAMPLE_USER_001",
+  "name": "Dinie Zikry",
+  "date_of_birth": "2001-08-01",
+  "age_last_birthday": 22,
+  "age_next_birthday": 23,
+  "gender": "male",
+  "smoking_status": "non-smoker",
+  "occupation": "Office Worker / Professional",
+  "location": "Singapore",
+  "health_conditions": {
+    "pre_existing": [],
+    "notes": "No known pre-existing conditions"
+  },
+
+  "policies_owned": [
+    "Manulife_Policy_Illustration_REDACTED.pdf",
+    "GREAT_SupremeHealth_Benefits.pdf",
+    "GREAT_TravelCare.pdf"
+  ],
+
+  "policy_details": [
+    {
+      "policy_id": "POL_001_MANULIFE_TERM",
+      "filename": "Manulife_Policy_Illustration_REDACTED.pdf",
+      "insurer": "Manulife",
+      "product_name": "ManuProtect Term (II) - Renewable and Convertible",
+      "policy_type": "life_insurance",
+      "policy_number": "SAMPLE-MNL-001",
+      "status": "active",
+      "is_simulated": false,
+      "purchase_date": "2023-08-30",
+      "start_date": "2023-08-30",
+
+      "coverage_summary": {
+        "sum_insured": 1000000,
+        "policy_term_years": 10,
+        "premium_term_years": 10,
+        "base_death_benefit": 1000000,
+        "terminal_illness_benefit": 1000000,
+        "tpd_coverage": 1000000,
+        "critical_illness_coverage": 500000
+      },
+
+      "premium_details": {
+        "monthly_premium": 42.71,
+        "annual_premium": 497.50,
+        "payment_mode": "monthly",
+        "premium_breakdown": {
+          "base_plan": 22.32,
+          "tpd_rider": 2.49,
+          "critical_care_rider": 17.90
+        }
+      },
+
+      "riders_active": [
+        {
+          "rider_name": "Total and Permanent Disability Plus Rider (II)",
+          "sum_assured": 1000000,
+          "benefit_type": "lump_sum",
+          "coverage_details": {
+            "definition": "Own occupation (first 5 years), Any occupation (thereafter)",
+            "payout_trigger": "Cannot perform at least 3 out of 6 ADLs OR permanent disability from occupation"
+          }
+        },
+        {
+          "rider_name": "Critical Care Enhancer Rider (II)",
+          "sum_assured": 500000,
+          "benefit_type": "lump_sum",
+          "coverage_details": {
+            "conditions_covered": 36,
+            "early_stage_coverage": false,
+            "multi_claim": false,
+            "note": "Covers late-stage critical illnesses only"
+          }
+        }
+      ],
+
+      "features": {
+        "guaranteed_renewable": true,
+        "renewable_until_age": 85,
+        "conversion_privilege": true,
+        "conversion_deadline": "Before age 65 or end of policy term",
+        "quit_smoking_incentive": false
+      },
+
+      "coverage_gaps": {
+        "early_critical_illness": "Not covered (only late-stage)",
+        "hospitalization_expenses": "Not covered",
+        "temporary_disability": "Not covered",
+        "accident_specific": "Not covered"
+      }
+    },
+
+    {
+      "policy_id": "POL_002_GE_SUPREMEHEALTH",
+      "filename": "GREAT_SupremeHealth_Benefits.pdf",
+      "filename_pages": "2-13",
+      "insurer": "Great Eastern",
+      "product_name": "GREAT SupremeHealth",
+      "policy_type": "health_insurance",
+      "policy_number": "SIMULATED-GE-SH-P-PLUS-001",
+      "status": "active",
+      "is_simulated": true,
+      "simulated_purchase_date": "2024-01-01",
+      "simulated_start_date": "2024-01-01",
+
+      "plan_tier": {
+        "tier": "P PLUS",
+        "tier_description": "Private & Restructured Hospitals (All Classes)",
+        "why_chosen": "Highest flexibility - covers both private and restructured hospitals"
+      },
+
+      "coverage_summary": {
+        "annual_benefit_limit": 1500000,
+        "lifetime_benefit_limit": "Unlimited",
+        "hospital_ward_entitlement": "Private & Restructured (All Classes)",
+        "deductible_per_year_under_80": 3500,
+        "deductible_per_year_80_plus": 5250,
+        "co_insurance": 10
+      },
+
+      "premium_estimate": {
+        "note": "Based on age 22, from premium table page 19",
+        "manulife_medishield_life": 200,
+        "additional_withdrawal_limit_awl": 300,
+        "total_supremehealth_premium": 344.44,
+        "cash_outlay_required": 44.44,
+        "payment_frequency": "annual"
+      },
+
+      "key_benefits": {
+        "hospitalization": {
+          "normal_ward": "As Charged",
+          "icu": "As Charged",
+          "surgery": "As Charged",
+          "surgical_implants": "As Charged",
+          "pre_hospitalization_90_days": "As Charged",
+          "pre_hospitalization_180_days": "As Charged (with conditions)",
+          "post_hospitalization_180_days": "As Charged",
+          "post_hospitalization_365_days": "As Charged (with conditions)"
+        },
+        "outpatient_benefits": {
+          "kidney_dialysis": "As Charged",
+          "cancer_drug_treatment_one_cancer": "5x MediShield Life limit per month",
+          "cancer_drug_treatment_multiple_cancers": "Sum of highest limits",
+          "cancer_drug_services_one_cancer": "5x MediShield Life limit per period",
+          "cancer_drug_services_multiple_cancers": "5x MediShield Life limit for multiple",
+          "radiotherapy": "As Charged",
+          "immunosuppressants_transplant": "As Charged"
+        },
+        "additional_benefits": {
+          "proton_beam_therapy": 80000,
+          "cell_gene_therapy_kymriah": 200000,
+          "cell_gene_therapy_yescarta": 200000,
+          "psychiatric_treatment": 5000,
+          "living_donor_transplant_donor_expenses": 60000,
+          "living_donor_transplant_recipient_expenses": 60000,
+          "emergency_overseas": "As Charged (limited to private hospital charges)"
+        },
+        "final_expenses_benefit": 7000
+      },
+
+      "exclusions_summary": {
+        "pre_existing_conditions": "Not covered unless disclosed and accepted",
+        "cosmetic_procedures": "Not covered unless medically necessary",
+        "pregnancy_normal": "Not covered",
+        "pregnancy_complications": "Covered"
+      },
+
+      "coverage_gaps": {
+        "deductible_co_insurance": "You pay deductible + 10% co-insurance per claim",
+        "outpatient_general": "Not covered (only specific outpatient like dialysis, cancer)",
+        "dental": "Only accidental dental covered",
+        "traditional_chinese_medicine": "Not covered"
+      },
+
+      "underwriting": {
+        "existing_conditions_disclosure": "history of asthma at age 10"
+      }
+    },
+
+    {
+      "policy_id": "POL_003_GE_TRAVELCARE",
+      "filename": "GREAT_TravelCare.pdf",
+      "insurer": "Great Eastern",
+      "product_name": "GREAT TravelCare",
+      "policy_type": "travel_insurance",
+      "policy_number": "SIMULATED-GE-TC-PLAT-001",
+      "status": "active",
+      "is_simulated": true,
+      "simulated_purchase_date": "2024-06-01",
+      "simulated_coverage_type": "Annual Worldwide",
+
+      "plan_tier": {
+        "tier": "Platinum",
+        "tier_description": "Comprehensive worldwide coverage with pre-existing conditions add-on",
+        "why_chosen": "Maximum coverage for frequent travelers + pre-existing conditions protection",
+        "trip_type": "Annual Worldwide (up to 45 days per trip)",
+        "add_ons": ["pre_existing_conditions"]
+      },
+
+      "coverage_summary": {
+        "geographical_coverage": "Worldwide",
+        "max_trip_duration_days": 45,
+        "automatic_extension_days": 30,
+        "age_coverage": "Up to age 75"
+      },
+
+      "premium_estimate": {
+        "note": "Estimated for annual worldwide plan, age 22",
+        "estimated_annual_premium": "S$400-600 (varies by underwriting)",
+        "payment_frequency": "annual"
+      },
+
+      "key_benefits": {
+        "personal_accident_medical": {
+          "accidental_death_under_70": 500000,
+          "accidental_death_70_plus": 150000,
+          "public_transport_double_indemnity": 1000000,
+          "emergency_medical_evacuation": 1000000,
+          "repatriation": 1000000,
+          "overseas_medical_expenses_under_70": 1000000,
+          "overseas_medical_expenses_70_plus": 200000,
+          "singapore_medical_expenses_under_70": 25000,
+          "singapore_medical_expenses_70_plus": 8000,
+          "hospital_cash_overseas": "S$200 per day (max S$40,000)",
+          "hospital_cash_singapore": "S$100 per day (max S$1,000)"
+        },
+        "pre_existing_conditions_addon": {
+          "enabled": true,
+          "overseas_medical_under_70": 200000,
+          "overseas_medical_70_plus": 150000,
+          "co_payment": "S$100 per outpatient visit",
+          "tcm_coverage": "S$80 per visit",
+          "evacuation": 200000,
+          "repatriation": 1000000,
+          "trip_cancellation": 15000,
+          "trip_cancellation_co_payment": "50%",
+          "trip_postponement": 3000,
+          "trip_postponement_co_payment": "50%",
+          "trip_disruption": 15000,
+          "trip_disruption_co_payment": "50%",
+          "condolence_cash": 2000
+        },
+        "travel_inconvenience": {
+          "trip_cancellation": 15000,
+          "trip_cancellation_any_reason": 6000,
+          "trip_postponement": 3000,
+          "trip_postponement_any_reason": 2000,
+          "trip_disruption": 15000,
+          "trip_curtailment_any_reason": 8000,
+          "insolvency_protection": 8000,
+          "travel_delay_overseas": "S$100 every 4 hours (max S$2,000)",
+          "travel_delay_singapore": "S$100 every 4 hours (max S$500)",
+          "baggage_loss": 8000,
+          "baggage_delay_overseas": "S$200 every 4 hours (max S$2,500)",
+          "baggage_delay_singapore": "S$200 every 4 hours (max S$400)",
+          "personal_money_loss": 500,
+          "travel_documents_replacement": 5000,
+          "jewellery_cover": 500
+        },
+        "lifestyle": {
+          "home_contents": 10000,
+          "fraudulent_card_use": 1000,
+          "pet_care": "S$100 per day (max S$800)",
+          "rental_vehicle_excess": 1500,
+          "golf_equipment_damage": 1000,
+          "golf_unused_fees": 250,
+          "golf_hole_in_one": 250,
+          "sports_equipment": 1000,
+          "terrorism_extension": 100000,
+          "personal_liability": 1000000,
+          "adventurous_leisure_activities": "Covered"
+        },
+        "special_features": {
+          "trip_inconvenience_any_reason": "Must purchase within 30 days of initial booking",
+          "kidnap_hostage": "S$250 every 6 hours (max S$5,000)",
+          "automatic_extension": "Up to 30 days if unable to return as scheduled"
+        }
+      },
+
+      "exclusions_summary": {
+        "pre_existing_without_addon": "Not covered without add-on benefit",
+        "high_risk_activities": "Professional sports, war zones, illegal activities",
+        "pregnancy": "Not covered",
+        "mental_health": "Limited coverage"
+      },
+
+      "coverage_gaps": {
+        "trip_duration_limit": "Max 45 days per trip (need extension for longer trips)",
+        "age_limit": "Coverage reduces after age 70, terminates at 75",
+        "geographical_exclusions": "May exclude specific high-risk countries"
+      }
+    }
+  ],
+
+  "coverage_analysis": {
+    "strengths": [
+      "Strong death/TPD protection (S$1M)",
+      "Comprehensive health insurance (private hospital access)",
+      "Late-stage critical illness covered (36 conditions)",
+      "Travel protection with pre-existing conditions coverage"
+    ],
+    "gaps": [
+      "Early-stage critical illness not covered",
+      "Temporary disability income not covered",
+      "Accident-specific coverage limited to travel only",
+      "General outpatient not covered (GP visits, dental)",
+      "Maternity not covered"
+    ],
+    "recommendations": [
+      "Consider early critical illness rider or standalone plan",
+      "Consider personal accident insurance (AccidentCare) for daily accident protection",
+      "Consider adding maternity coverage if family planning soon"
+    ]
+  },
+
+  "simulation_metadata": {
+    "created_date": "2025-11-04",
+    "purpose": "Testing insurance advisory chatbot with realistic portfolio",
+    "simulated_policies": ["POL_002_GE_SUPREMEHEALTH", "POL_003_GE_TRAVELCARE"],
+    "actual_policies": ["POL_001_MANULIFE_TERM"],
+    "test_scenarios": [
+      "Travel purchase decisions (rental car, trip cancellation)",
+      "Coverage gap analysis",
+      "Cross-policy claim scenarios",
+      "Pre-existing conditions while traveling"
+    ]
+  }
+}

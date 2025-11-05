@@ -4,6 +4,9 @@ Domain-Agnostic Chatbot CLI
 Main entry point for querying documents across different domains.
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import argparse
 import sys
 import os

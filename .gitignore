@@ -317,3 +317,6 @@ logs/
 .DS_Store?
 Icon?
 ._*
+
+# Personal Info
+user_profile.json

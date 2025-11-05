@@ -30,8 +30,8 @@ class DocumentProcessor:
             print(f"Processing {len(document_paths)} documents...")
 
             # Process all documents into chunks
-            all_chunks = []
-            all_metadata = []
+            all_chunks_raw = []
+            all_metadata_raw = []
             processed_docs = []
 
             for i, doc_path in enumerate(document_paths):
@@ -41,24 +41,34 @@ class DocumentProcessor:
                 chunks, metadata = self.file_handler.process_document(doc_path)
 
                 if chunks:
-                    all_chunks.extend(chunks)
-                    all_metadata.extend(metadata)
+                    all_chunks_raw.extend(chunks)
+                    all_metadata_raw.extend(metadata)
                     processed_docs.append({
                         "filename": Path(doc_path).name,
                         "file_path": doc_path,
                         "processed_at": datetime.now().isoformat(),
-                        "chunk_count": len(chunks),
+                        "chunk_count": len(chunks), # This is the raw chunk count
                         "file_size_mb": round(Path(doc_path).stat().st_size / (1024 * 1024), 2)
                     })
-                    print(f"{len(chunks)} chunks extracted")
+                    print(f"  [OK] {len(chunks)} raw chunks extracted")
                 else:
-                    print(f"Failed to process {Path(doc_path).name}")
+                    print(f"  [FAIL] Failed to process {Path(doc_path).name}")
 
-            if not all_chunks:
+            if not all_chunks_raw:
                 print("No chunks extracted from documents.")
                 return False
 
-            print(f"Total chunks: {len(all_chunks)}")
+            print(f"Total raw chunks: {len(all_chunks_raw)}")
+
+            all_chunks_clean = []
+            all_metadata_clean = []
+
+            for chunk, meta in zip(all_chunks_raw, all_metadata_raw):
+                if chunk and chunk.strip(): # Check for None or empty strings
+                    all_chunks_clean.append(chunk)
+                    all_metadata_clean.append(meta)
+
+            print(f"Total *clean* chunks for indexing: {len(all_chunks_clean)}")
 
             # Create batch directory
             batch_dir = Path("batches") / batch_id
@@ -67,7 +77,8 @@ class DocumentProcessor:
             # Build FAISS index
             print("Building FAISS index...")
             faiss_success = self.index_builder.build_faiss_index(
-                chunks=all_chunks,
+                chunks=all_chunks_clean, # Use the clean list
+                metadata=all_metadata_clean, # Use the clean list
                 output_dir=str(batch_dir / "faiss_index")
             )
 
@@ -78,8 +89,8 @@ class DocumentProcessor:
             # Build BM25 index
             print("Building BM25 index...")
             bm25_success = self.index_builder.build_bm25_index(
-                chunks=all_chunks,
-                metadata=all_metadata,
+                chunks=all_chunks_clean, # Use the clean list
+                metadata=all_metadata_clean, # Use the clean list
                 output_file=str(batch_dir / "bm25_index.pkl")
             )
 
@@ -96,8 +107,7 @@ class DocumentProcessor:
                 "documents": processed_docs,
                 "statistics": {
                     "total_documents": len(processed_docs),
-                    "total_chunks": len(all_chunks),
-                    "avg_chunk_size": round(sum(len(chunk) for chunk in all_chunks) / len(all_chunks))
+                    "total_chunks": len(all_chunks_clean)
                 }
             }
 
@@ -105,14 +115,16 @@ class DocumentProcessor:
                 json.dump(batch_metadata, f, indent=2)
 
             # Register batch
+            # We also fix the cosmetic bug where the chunk count wasn't passed
             self.batch_manager.register_batch(batch_id, {
                 "name": batch_metadata["name"],
                 "description": description,
                 "doc_count": len(processed_docs),
-                "created_at": batch_metadata["created_at"]
+                "created_at": batch_metadata["created_at"],
+                "chunk_count": len(all_chunks_clean) # Pass the correct count
             })
 
-            print("Batch created successfully!")
+            print("[SUCCESS] Batch created successfully!")
             return True
 
         except Exception as e:

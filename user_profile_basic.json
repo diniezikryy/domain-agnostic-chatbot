@@ -1,0 +1,20 @@
+{
+  "user_id": "1",
+  "name": "Dinie Zikry Rudi",
+  "date_of_birth": "2001-08-01",
+  "age_last_birthday": 22,
+  "age_next_birthday": 23,
+  "gender": "male",
+  "smoking_status": "non-smoker",
+
+  "policies_owned": [
+    "Manulife_Policy_Illustration_REDACTED.pdf",
+    "GREAT_SupremeHealth_Benefits.pdf",
+    "GREAT_TravelCare.pdf"
+  ],
+
+  "policy_tiers": {
+    "GREAT_SupremeHealth_Benefits.pdf": "P PLUS",
+    "GREAT_TravelCare.pdf": "Platinum"
+  }
+}

@@ -1,17 +1,22 @@
 """
 File Handlers
 Handles processing of different document formats (PDF, DOCX, TXT, MD).
+Uses pdfplumber for advanced table extraction from PDFs.
 """
 
 import os
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
 import re
+import pdfplumber
+import pandas as pd
+from docx import Document
 
 class FileHandler:
     """Handles processing of various document formats."""
 
-    def __init__(self, chunk_size: int = 800, chunk_overlap: int = 100):
+    # Maybe can try to increase the chunk size to 2000 to prevent tables from splitting.
+    def __init__(self, chunk_size: int = 2000, chunk_overlap: int = 200):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
@@ -26,99 +31,150 @@ class FileHandler:
         # Extract text based on file type
         try:
             if file_path.suffix.lower() == '.pdf':
-                text = self._extract_pdf_text(file_path)
+                # This function is now much more powerful
+                page_texts = self._extract_pdf_text_and_tables(file_path)
             elif file_path.suffix.lower() == '.docx':
-                text = self._extract_docx_text(file_path)
+                page_texts = self._extract_docx_text(file_path)
             elif file_path.suffix.lower() in ['.txt', '.md']:
-                text = self._extract_text_file(file_path)
+                page_texts = self._extract_text_file(file_path)
             else:
                 print(f"Unsupported file format: {file_path.suffix}")
                 return [], []
 
-            if not text.strip():
+            if not page_texts:
                 print(f"No text extracted from {file_path.name}")
                 return [], []
 
-            # Create chunks
-            chunks = self._create_chunks(text)
+            # Create chunks and metadata
+            all_chunks = []
+            all_metadata = []
 
-            # Create metadata for each chunk
-            metadata = []
-            for i, chunk in enumerate(chunks):
-                metadata.append({
-                    "source": str(file_path),
-                    "filename": file_path.name,
-                    "chunk_id": i,
-                    "chunk_size": len(chunk),
-                    "file_type": file_path.suffix.lower()
-                })
+            for page_info in page_texts:
+                page_num = page_info['page_num']
+                page_content = page_info['text']
 
-            return chunks, metadata
+                # Create chunks for this page's content
+                chunks = self._create_chunks(page_content)
+
+                for i, chunk in enumerate(chunks):
+                    all_chunks.append(chunk)
+                    all_metadata.append({
+                        "source": str(file_path),
+                        "filename": file_path.name,
+                        "page_number": page_num, # Now accurate per-chunk
+                        "year": self._extract_year_from_filename(file_path.name),
+                        "chunk_id": f"p{page_num}-{i}",
+                        "chunk_size": len(chunk),
+                        "file_type": file_path.suffix.lower()
+                    })
+
+            return all_chunks, all_metadata
 
         except Exception as e:
             print(f"Error processing {file_path.name}: {e}")
             return [], []
 
-    def _extract_pdf_text(self, file_path: Path) -> str:
-        """Extract text from PDF file."""
+    def _tables_to_markdown(self, tables: List[List[List[str]]]) -> str:
+        """Converts tables extracted by pdfplumber into Markdown strings."""
+        markdown_tables = []
+        for table in tables:
+            if not table:
+                continue
+
+            # Convert list of lists to pandas DataFrame
+            # Use first row as header
+            header = table[0]
+            data = table[1:]
+
+            # Clean header (replace None with empty string)
+            header = [str(h) if h is not None else '' for h in header]
+
+            try:
+                df = pd.DataFrame(data, columns=header)
+                # Convert DataFrame to Markdown, index=False drops the row numbers
+                markdown_tables.append(df.to_markdown(index=False))
+            except Exception as e:
+                print(f"Warning: Could not convert table to markdown: {e}")
+
+        return "\n\n".join(markdown_tables)
+
+    def _extract_year_from_filename(self, filename: str) -> int:
+        """Extract year from filename."""
+        import re
+        match = re.search(r'(\d{2,4})', filename)
+        if match:
+            year = int(match.group(1))
+            if year < 100:  # Two digit year
+                year += 2000
+            return year
+        return None
+
+    def _extract_pdf_text_and_tables(self, file_path: Path) -> List[Dict]:
+        """Extract text and tables from PDF file using pdfplumber."""
+        page_texts = []
         try:
-            import PyPDF2
+            with pdfplumber.open(file_path) as pdf:
+                for page in pdf.pages:
+                    # Extract plain text
+                    text = page.extract_text() or ""
 
-            text = ""
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
+                    # Extract tables and convert to Markdown
+                    tables = page.extract_tables()
+                    markdown_tables = self._tables_to_markdown(tables)
 
-            return self._clean_text(text)
+                    # Combine text and tables for this page
+                    full_page_content = f"{text}\n\n{markdown_tables}"
 
-        except ImportError:
-            print("PyPDF2 not installed. Install with: pip install PyPDF2")
-            return ""
+                    page_texts.append({
+                        'page_num': page.page_number,
+                        'text': self._clean_text(full_page_content)
+                    })
+            return page_texts
         except Exception as e:
             print(f"Error reading PDF {file_path.name}: {e}")
-            return ""
+            return []
 
-    def _extract_docx_text(self, file_path: Path) -> str:
+    def _extract_docx_text(self, file_path: Path) -> List[Dict]:
         """Extract text from DOCX file."""
+        page_texts = []
         try:
-            from docx import Document
-
             doc = Document(file_path)
-            text = ""
-
+            full_text = ""
             for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
+                full_text += paragraph.text + "\n"
 
-            return self._clean_text(text)
-
-        except ImportError:
-            print("python-docx not installed. Install with: pip install python-docx")
-            return ""
+            # DOCX has no concept of pages, so we treat it as one page
+            page_texts.append({
+                'page_num': 1,
+                'text': self._clean_text(full_text)
+            })
+            return page_texts
         except Exception as e:
             print(f"Error reading DOCX {file_path.name}: {e}")
-            return ""
+            return []
 
-    def _extract_text_file(self, file_path: Path) -> str:
+    def _extract_text_file(self, file_path: Path) -> List[Dict]:
         """Extract text from TXT or MD file."""
+        page_texts = []
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
                 text = file.read()
 
-            return self._clean_text(text)
-
+            # Treat as one page
+            page_texts.append({
+                'page_num': 1,
+                'text': self._clean_text(text)
+            })
+            return page_texts
         except Exception as e:
             print(f"Error reading text file {file_path.name}: {e}")
-            return ""
+            return []
 
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text."""
-        # Remove excessive whitespace
-        text = re.sub(r'\s+', ' ', text)
-
-        # Remove special characters that might interfere with processing
-        text = re.sub(r'[^\w\s\.\,\!\?\;\:\-\(\)]', '', text)
-
+        # Remove excessive newlines but keep single newlines
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        text = re.sub(r' +', ' ', text)
         return text.strip()
 
     def _create_chunks(self, text: str) -> List[str]:
@@ -129,31 +185,18 @@ class FileHandler:
         chunks = []
         start = 0
 
+        # Use simple sliding window. More advanced logic could be added here.
         while start < len(text):
             end = start + self.chunk_size
+            chunk = text[start:end]
+            chunks.append(chunk)
 
-            # If we're not at the end, try to break at a sentence boundary
-            if end < len(text):
-                # Look for sentence endings within the last 100 characters
-                search_start = max(end - 100, start)
-                sentence_end = -1
+            move = self.chunk_size - self.chunk_overlap
+            start += move
 
-                for punct in ['. ', '! ', '? ']:
-                    pos = text.rfind(punct, search_start, end)
-                    if pos > sentence_end:
-                        sentence_end = pos + 1
-
-                if sentence_end > start:
-                    end = sentence_end
-
-            chunk = text[start:end].strip()
-            if chunk:
-                chunks.append(chunk)
-
-            # Move start position with overlap
-            start = max(start + self.chunk_size - self.chunk_overlap, end)
-
-            if start >= len(text):
+            # Ensure last chunk captures the end
+            if start + self.chunk_size > len(text) and start < len(text):
+                chunks.append(text[start:])
                 break
 
-        return chunks
+        return [c.strip() for c in chunks if c.strip()]

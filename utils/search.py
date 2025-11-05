@@ -17,7 +17,7 @@ class SearchIndexBuilder:
     def __init__(self):
         self.embedding_generator = None
 
-    def build_faiss_index(self, chunks: List[str], output_dir: str) -> bool:
+    def build_faiss_index(self, chunks: List[str], metadata: List[Dict], output_dir: str) -> bool:
         """Build FAISS index from text chunks."""
         try:
             import faiss
@@ -54,7 +54,8 @@ class SearchIndexBuilder:
             with open(Path(output_dir) / "index.pkl", 'wb') as f:
                 pickle.dump({
                     'chunks': chunks,
-                    'embeddings': embeddings
+                    'embeddings': embeddings,
+                    'metadata': metadata,
                 }, f)
 
             print(f"FAISS index saved to {output_dir}")
@@ -99,6 +100,7 @@ class HybridSearchEngine:
     def __init__(self):
         self.faiss_index = None
         self.faiss_chunks = []
+        self.faiss_metadata = []
         self.bm25_index = None
         self.bm25_chunks = []
         self.bm25_metadata = []
@@ -143,6 +145,7 @@ class HybridSearchEngine:
             with open(chunks_file, 'rb') as f:
                 data = pickle.load(f)
                 self.faiss_chunks = data['chunks']
+                self.faiss_metadata = data.get('metadata', [])
 
             # Initialize embedding generator for query embeddings
             if not self.embedding_generator:
@@ -173,7 +176,13 @@ class HybridSearchEngine:
             return False
 
     def hybrid_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
-        """Perform hybrid search combining FAISS and BM25 results."""
+        """
+        Perform hybrid search combining FAISS and BM25 results.
+
+        Args:
+            query: Search query string
+            top_k: Number of results to return
+        """
         if not self.faiss_index or not self.bm25_index:
             print("Indexes not loaded")
             return []
@@ -218,7 +227,8 @@ class HybridSearchEngine:
                         'content': self.faiss_chunks[idx],
                         'score': float(score),
                         'source': 'faiss',
-                        'rank': i
+                        'rank': i,
+                        'metadata': self.faiss_metadata[idx] if idx < len(self.faiss_metadata) else {}
                     })
 
             return results
@@ -256,7 +266,8 @@ class HybridSearchEngine:
             print(f"Error in BM25 search: {e}")
             return []
 
-    def _combine_results(self, faiss_results: List[Dict], bm25_results: List[Dict], top_k: int) -> List[Dict[str, Any]]:
+    def _combine_results(self, faiss_results: List[Dict], bm25_results: List[Dict],
+                        top_k: int) -> List[Dict[str, Any]]:
         """Combine FAISS and BM25 results with weighted scoring."""
         # Weight factors (can be tuned)
         faiss_weight = 0.6
@@ -297,6 +308,7 @@ class HybridSearchEngine:
             else:
                 result['combined_score'] = result['normalized_score'] * bm25_weight
                 combined.append(result)
+                seen_content.add(content)
 
         # Sort by combined score and return top_k
         combined.sort(key=lambda x: x['combined_score'], reverse=True)

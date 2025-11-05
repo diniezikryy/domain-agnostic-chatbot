@@ -49,6 +49,7 @@ class BatchManager:
                 "name": batch_info.get("name", batch_id),
                 "description": batch_info.get("description", ""),
                 "doc_count": batch_info.get("doc_count", 0),
+                "chunk_count": batch_info.get("chunk_count", 0), # --- FIX ---
                 "created_at": batch_info.get("created_at", datetime.now().isoformat()),
                 "faiss_path": f"batches/{batch_id}/faiss_index",
                 "bm25_path": f"batches/{batch_id}/bm25_index.pkl",
@@ -68,12 +69,30 @@ class BatchManager:
     def list_batches(self) -> Dict[str, Any]:
         """List all available batches."""
         registry = self._load_registry()
-        return registry.get("batches", {})
+        batches_info = registry.get("batches", {})
+        for batch_id, info in batches_info.items():
+            if 'chunk_count' not in info:
+                try:
+                    with open(self.batches_dir / batch_id / "metadata.json", 'r') as f:
+                        meta = json.load(f)
+                        info['chunk_count'] = meta.get("statistics", {}).get("total_chunks", 0)
+                except FileNotFoundError:
+                    info['chunk_count'] = 0
+        return batches_info
 
     def get_batch_info(self, batch_id: str) -> Optional[Dict[str, Any]]:
         """Get information about a specific batch."""
         registry = self._load_registry()
-        return registry.get("batches", {}).get(batch_id)
+        info = registry.get("batches", {}).get(batch_id)
+
+        if info and 'chunk_count' not in info:
+            try:
+                with open(self.batches_dir / batch_id / "metadata.json", 'r') as f:
+                    meta = json.load(f)
+                    info['chunk_count'] = meta.get("statistics", {}).get("total_chunks", 0)
+            except FileNotFoundError:
+                info['chunk_count'] = 0 # Default to 0
+        return info
 
     def switch_batch(self, batch_id: str) -> bool:
         """Switch to a specific batch."""
