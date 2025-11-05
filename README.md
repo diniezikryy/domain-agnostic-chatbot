@@ -12,6 +12,9 @@ This chatbot system can work with different document sets (insurance policies, l
 
 - **Multi-format support**: PDF, DOCX, TXT, MD files
 - **Hybrid search**: FAISS vector search + BM25 keyword search
+- **Configurable retrieval**: Hybrid, vector-only, or keyword-only strategies
+- **HyDE query synthesis**: Hypothetical document embeddings for improved retrieval
+- **CrossEncoder reranking**: Semantic reranking for higher quality results
 - **Intelligent query decomposition**: Complex questions broken into focused sub-queries
 - **Balanced retrieval**: Fair representation from all sources in comparisons
 - **Zero-trust response generation**: Strict evidence requirements, no hallucinations
@@ -19,6 +22,7 @@ This chatbot system can work with different document sets (insurance policies, l
 - **Evidence verification**: System acknowledges when data is insufficient
 - **Batch management**: Organize documents by domain
 - **CLI interface**: Simple command-line interaction
+- **RAG experimentation framework**: Test and compare different RAG configurations
 - **Evaluation suite**: Automated testing for quality assurance
 - **Domain-agnostic**: No hardcoded domain-specific logic
 
@@ -127,6 +131,30 @@ python tests/test_queries.py --batch insurance
 # Expected output: Tests Passed: 8/8 (100%), Score: 95.7%
 ```
 
+### RAG Experimentation Commands
+```bash
+# Run all RAG experiments on a batch
+python evaluation/run_experiments.py --batch insurance
+
+# Run specific experiment
+python evaluation/run_experiments.py --batch insurance --experiment hyde_enabled
+
+# Use custom test queries
+python evaluation/run_experiments.py --batch insurance --queries custom_queries.json
+
+# Save results to custom directory
+python evaluation/run_experiments.py --batch insurance --output-dir my_results/
+```
+
+### Advanced Batch Creation
+```bash
+# Create batch with specific embedding model
+python setup_batch.py insurance --embedding-model text-embedding-3-large
+
+# Rebuild batch with different embedding model
+python setup_batch.py insurance --rebuild --embedding-model text-embedding-3-small
+```
+
 ## Directory Structure
 ```
 domain-agnostic-chatbot/
@@ -139,10 +167,20 @@ domain-agnostic-chatbot/
 │   ├── __init__.py
 │   ├── file_handlers.py           # PDF, DOCX, TXT processors
 │   ├── embeddings.py              # Text embedding utilities
-│   └── search.py                  # FAISS + BM25 hybrid search
+│   ├── search.py                  # FAISS + BM25 hybrid search
+│   ├── hyde.py                    # HyDE query synthesis
+│   └── reranking.py               # CrossEncoder reranking
 ├── config/
 │   ├── __init__.py
 │   └── settings.py                # Configuration management
+├── evaluation/                    # RAG experimentation framework
+│   ├── __init__.py
+│   ├── run_experiments.py         # Experiment runner
+│   ├── experiments.json           # Experiment configurations
+│   ├── test_queries.json          # Test queries with ground truth
+│   └── results/                   # Experiment results (generated)
+├── docs/                          # Documentation
+│   └── RAG_EVALUATION_PLAN.md     # RAG experimentation guide
 ├── tests/
 │   └── test_queries.py            # Evaluation test suite
 ├── documents/                     # User document input
@@ -216,8 +254,16 @@ top_k = 10                   # Chunks per sub-query
 max_per_policy = 10          # Chunks per source in comparisons
 
 # Response Generation
+response_model = "gpt-4o-mini"  # Generation model
 max_tokens = 1500            # GPT response length
 temperature = 0.1            # Lower = more factual
+
+# RAG Experimentation
+retrieval_strategy = "hybrid"     # "hybrid", "vector_only", or "keyword_only"
+use_hyde = False                  # Enable HyDE query synthesis
+use_reranking = False             # Enable CrossEncoder reranking
+reranker_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+embedding_model = "text-embedding-3-small"  # Embedding model for new batches
 ```
 
 ## Architecture Deep-Dive
@@ -397,6 +443,64 @@ python tests/test_queries.py --batch insurance
 - ✅ Must acknowledge different customer profiles
 
 ## Advanced Features
+
+### RAG Experimentation Framework
+
+The system includes a comprehensive experimentation framework for testing and optimizing different RAG configurations:
+
+#### Configurable Components
+1. **Retrieval Strategies**
+   - `hybrid`: FAISS (60%) + BM25 (40%) - default
+   - `vector_only`: Pure semantic search
+   - `keyword_only`: Pure keyword search
+
+2. **HyDE (Hypothetical Document Embeddings)**
+   - Generates hypothetical answers to improve retrieval
+   - Lazy-loaded with graceful fallback
+   - Enable with `use_hyde: true` in config
+
+3. **CrossEncoder Reranking**
+   - Semantic reranking for higher quality results
+   - Uses `cross-encoder/ms-marco-MiniLM-L-6-v2`
+   - Lazy-loaded with graceful fallback
+   - Enable with `use_reranking: true` in config
+
+4. **Generation Models**
+   - `gpt-4o-mini` (default, fast and cost-effective)
+   - `gpt-4o` (high-quality, comprehensive)
+   - `gpt-3.5-turbo` (legacy support)
+
+5. **Embedding Models**
+   - `text-embedding-3-small` (default, 1536 dims)
+   - `text-embedding-3-large` (3072 dims)
+
+#### Running Experiments
+
+```bash
+# Run all predefined experiments
+python evaluation/run_experiments.py --batch insurance
+
+# Output: JSON summary + console leaderboard
+# Results saved to: evaluation/results/experiment_results.json
+```
+
+Example leaderboard output:
+```
+================================================================================
+RAG EXPERIMENT LEADERBOARD
+================================================================================
+Batch: insurance | Experiments: 5 | Date: 2024-11-05
+
+Rank | Experiment        | Success | Cite%   | Avg Time
+--------------------------------------------------------------------------------
+1    | full_pipeline     | 100.0%  | 95.0%   | 9.3s
+2    | reranking_enabled | 100.0%  | 92.0%   | 8.1s
+3    | hyde_enabled      | 100.0%  | 90.0%   | 7.8s
+4    | baseline          | 100.0%  | 88.0%   | 7.2s
+5    | vector_only       | 100.0%  | 85.0%   | 6.5s
+```
+
+See `docs/RAG_EVALUATION_PLAN.md` for detailed experimentation guide.
 
 ### Query Decomposition
 Complex queries are automatically broken down:
