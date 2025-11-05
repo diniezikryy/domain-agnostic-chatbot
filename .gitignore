@@ -320,10 +320,3 @@ Icon?
 
 # Personal Info
 user_profile.json
-
-# Evaluation results
-evaluation/results/
-*.results.json
-
-# Test validation script (temporary)
-test_rag_framework.py

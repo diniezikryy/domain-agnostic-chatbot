@@ -22,7 +22,6 @@ def main():
     parser.add_argument("--rebuild", action="store_true", help="Rebuild existing batch")
     parser.add_argument("--delete", action="store_true", help="Delete existing batch")
     parser.add_argument("--source", help="Source directory (default: documents/{batch_name})")
-    parser.add_argument("--embedding-model", help="Embedding model to use (default: text-embedding-3-small)")
 
     args = parser.parse_args()
 
@@ -69,7 +68,7 @@ def main():
 
         # Process documents
         print(f"\nCreating batch '{args.batch_name}'...")
-        document_processor = DocumentProcessor(embedding_model=args.embedding_model)
+        document_processor = DocumentProcessor()
 
         success = document_processor.create_batch(
             batch_id=args.batch_name,

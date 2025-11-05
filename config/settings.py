@@ -39,13 +39,6 @@ class Settings:
         # Query processing
         self.max_context_length = 4000
         self.response_model = "gpt-4o-mini"
-        
-        # RAG Experimentation settings
-        self.retrieval_strategy = "hybrid"  # Options: "hybrid", "vector_only", "keyword_only"
-        self.use_hyde = False  # Enable HyDE query synthesis
-        self.use_reranking = False  # Enable CrossEncoder reranking
-        self.reranker_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-        self.reranker_top_k = 10  # Number of chunks to rerank
 
     def validate(self) -> bool:
         """Validate configuration."""
@@ -71,12 +64,7 @@ class Settings:
             "embedding_model": self.embedding_model,
             "embedding_dimension": self.embedding_dimension,
             "max_context_length": self.max_context_length,
-            "response_model": self.response_model,
-            "retrieval_strategy": self.retrieval_strategy,
-            "use_hyde": self.use_hyde,
-            "use_reranking": self.use_reranking,
-            "reranker_model": self.reranker_model,
-            "reranker_top_k": self.reranker_top_k
+            "response_model": self.response_model
         }
 
 # Global settings instance
