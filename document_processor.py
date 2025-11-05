@@ -17,10 +17,10 @@ from utils.search import SearchIndexBuilder
 from batch_manager import BatchManager
 
 class DocumentProcessor:
-    def __init__(self, embedding_model: str = None):
+    def __init__(self):
         self.file_handler = FileHandler()
-        self.embedding_generator = EmbeddingGenerator(model_name=embedding_model) if embedding_model else EmbeddingGenerator()
-        self.index_builder = SearchIndexBuilder(embedding_model=embedding_model)
+        self.embedding_generator = EmbeddingGenerator()
+        self.index_builder = SearchIndexBuilder()
         self.batch_manager = BatchManager()
 
     def create_batch(self, batch_id: str, document_paths: List[str],

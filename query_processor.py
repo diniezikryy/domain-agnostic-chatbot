@@ -17,7 +17,6 @@ from openai import OpenAI
 
 from utils.search import HybridSearchEngine
 from batch_manager import BatchManager
-from config.settings import settings
 
 class QueryProcessor:
 
@@ -30,29 +29,12 @@ class QueryProcessor:
         "motorcycle accident in singapore": "medical expenses while in Singapore",
     }
 
-    def __init__(self, batch_manager: BatchManager, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, batch_manager: BatchManager):
         self.batch_manager = batch_manager
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.user_profile = self._load_user_profile() # Load profile on initialization
-        
-        # RAG configuration (use provided config or default settings)
-        self.config = config or {}
-        self.retrieval_strategy = self.config.get('retrieval_strategy', settings.retrieval_strategy)
-        self.use_hyde = self.config.get('use_hyde', settings.use_hyde)
-        self.use_reranking = self.config.get('use_reranking', settings.use_reranking)
-        self.generation_model = self.config.get('generation_model', settings.response_model)
-        self.reranker_top_k = self.config.get('reranker_top_k', settings.reranker_top_k)
-        
-        # Lazy load HyDE and reranker
-        self.hyde_synthesizer = None
-        self.reranker = None
-        
-        if self.use_hyde:
-            self._init_hyde()
-        if self.use_reranking:
-            self._init_reranker()
 
     def _load_user_profile(self) -> Optional[Dict[str, Any]]:
         """Loads the user profile from user_profile.json in the project root."""
@@ -73,25 +55,6 @@ class QueryProcessor:
             # it's okay if the profile doesn't exist, just means no personalization
             print("Info: user_profile.json not found. Proceeding without personalization.")
             return None
-    
-    def _init_hyde(self):
-        """Initialize HyDE synthesizer with lazy loading."""
-        try:
-            from utils.hyde import get_hyde_synthesizer
-            self.hyde_synthesizer = get_hyde_synthesizer()
-        except Exception as e:
-            print(f"Warning: Failed to initialize HyDE - {e}")
-            self.use_hyde = False
-    
-    def _init_reranker(self):
-        """Initialize reranker with lazy loading."""
-        try:
-            from utils.reranking import get_reranker
-            reranker_model = self.config.get('reranker_model', settings.reranker_model)
-            self.reranker = get_reranker(reranker_model)
-        except Exception as e:
-            print(f"Warning: Failed to initialize reranker - {e}")
-            self.use_reranking = False
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
@@ -107,7 +70,7 @@ class QueryProcessor:
         print(f"Loading indexes for batch '{batch_id}'...")
         try:
             # Create a new search engine instance for the specified batch
-            self.search_engine = HybridSearchEngine(retrieval_strategy=self.retrieval_strategy)
+            self.search_engine = HybridSearchEngine()
             success = self.search_engine.load_indexes(
                 faiss_path=paths["faiss_index"],
                 bm25_path=paths["bm25_index"]
@@ -230,20 +193,14 @@ class QueryProcessor:
             start_time = time.time()
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
-            print(f"RAG Config: strategy={self.retrieval_strategy}, hyde={self.use_hyde}, rerank={self.use_reranking}, model={self.generation_model}")
 
-            # Apply HyDE if enabled
-            search_query = query
-            if self.use_hyde and self.hyde_synthesizer:
-                search_query = self.hyde_synthesizer.enhance_query(query)
-            else:
-                search_query = self._expand_query(query)
+            expanded_query = self._expand_query(query)
 
             raw_search_results = self.search_engine.hybrid_search(
-                query=search_query,
+                query=expanded_query, # Use the expanded query
                 top_k=50
             )
-            print(f"Retrieved {len(raw_search_results)} raw results from {self.retrieval_strategy} search.")
+            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
 
             is_personal_batch = (target_batch == "my_policies")
 
@@ -256,10 +213,6 @@ class QueryProcessor:
 
             unique_results = self._deduplicate_results(relevant_results)
             print(f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication.")
-            
-            # Apply reranking if enabled
-            if self.use_reranking and self.reranker and unique_results:
-                unique_results = self.reranker.rerank(query, unique_results, top_k=self.reranker_top_k)
 
             if not unique_results:
                 if is_personal_batch and self.user_profile:
@@ -376,7 +329,7 @@ Generate the answer now following all rules:
                  raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model=self.generation_model,  # Use configured model
+                model="gpt-4o", # Keep gpt-4o for this complex reasoning task
                 messages=[
                     {"role": "system", "content": "You are a precise, expert financial advisor. You answer questions by combining structured JSON data with citable text snippets from policy documents."},
                     {"role": "user", "content": prompt_instructions}
