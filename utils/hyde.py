@@ -54,12 +54,12 @@ class HyDEQuerySynthesizer:
             return None
         
         try:
-            prompt = f"""Generate a concise, factual answer to the following question as if you were 
-an expert writing documentation. Focus on key terms and concepts that would appear in relevant documents.
-
-Question: {query}
-
-Hypothetical Answer:"""
+            prompt = (
+                f"Generate a concise, factual answer to the following question as if you were "
+                f"an expert writing documentation. Focus on key terms and concepts that would appear in relevant documents.\n\n"
+                f"Question: {query}\n\n"
+                f"Hypothetical Answer:"
+            )
             
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",  # Use cheaper model for synthesis

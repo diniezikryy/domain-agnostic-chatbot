@@ -7,14 +7,17 @@ Combines functionality from metric_query_faiss.py and bm25_chunk_search.py.
 import os
 import pickle
 import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Literal
 import json
 from pathlib import Path
+
+# Valid retrieval strategies
+RetrievalStrategy = Literal["hybrid", "vector_only", "keyword_only"]
 
 class SearchIndexBuilder:
     """Builds FAISS and BM25 search indexes."""
 
-    def __init__(self, embedding_model: str = None):
+    def __init__(self, embedding_model: Optional[str] = None):
         self.embedding_generator = None
         self.embedding_model = embedding_model
 
@@ -101,7 +104,7 @@ class SearchIndexBuilder:
 class HybridSearchEngine:
     """Performs hybrid search using both FAISS and BM25."""
 
-    def __init__(self, retrieval_strategy: str = "hybrid"):
+    def __init__(self, retrieval_strategy: RetrievalStrategy = "hybrid"):
         self.faiss_index = None
         self.faiss_chunks = []
         self.faiss_metadata = []

@@ -11,18 +11,23 @@ class CrossEncoderReranker:
     
     _instance = None
     _initialized = False
+    _model_name = None
     
     def __new__(cls, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         """Singleton pattern with lazy initialization."""
         if cls._instance is None:
             cls._instance = super(CrossEncoderReranker, cls).__new__(cls)
+            cls._model_name = model_name
+        elif cls._model_name != model_name:
+            # Warn if trying to use different model name after initialization
+            print(f"Warning: CrossEncoderReranker already initialized with model '{cls._model_name}'. Ignoring request for '{model_name}'.")
         return cls._instance
     
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         """Initialize reranker (lazy loaded)."""
         if not CrossEncoderReranker._initialized:
             self.model = None
-            self.model_name = model_name
+            self.model_name = CrossEncoderReranker._model_name or model_name
             self.available = False
             
             try:
