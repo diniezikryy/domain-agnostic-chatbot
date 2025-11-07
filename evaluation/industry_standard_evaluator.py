@@ -44,6 +44,9 @@ class StandardRAGMetrics:
     
     # Metadata
     evaluation_method: str  # "llm_judge" or "heuristic"
+    
+    # Optional fields (must come after required fields)
+    answer_correctness: Optional[float] = None  # Correctness vs ground truth (0-1)
     tokens_used: Optional[int] = None
 
 
@@ -391,21 +394,28 @@ Respond in JSON format:
     def evaluate_context_recall(
         self,
         retrieved_contexts: List[str],
-        ground_truth_context: Optional[str] = None,
+        ground_truth_contexts: Optional[List[str]] = None,
         answer: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Evaluate context recall: whether all needed information was retrieved.
         
-        RAGAS definition: Proportion of information in ground truth that was retrieved.
-        Note: Requires ground truth or uses answer as proxy.
+        RAGAS definition: Proportion of ground truth contexts that were retrieved.
+        This measures if the retrieval system found all the minimal necessary passages.
+        
+        Args:
+            retrieved_contexts: List of retrieved document chunks
+            ground_truth_contexts: List of ground truth context snippets (from golden set)
+            answer: Generated answer (used as fallback if no ground truth)
+            
+        Returns:
+            Dict with recall score and breakdown
         """
-        # If no ground truth, estimate based on answer
-        if not ground_truth_context and answer:
-            # Heuristic: check if answer seems well-supported
+        if ground_truth_contexts:
+            return self._evaluate_context_recall_with_ground_truth(retrieved_contexts, ground_truth_contexts)
+        elif answer:
+            # Fallback: estimate based on answer if no ground truth available
             return self._evaluate_context_recall_from_answer(retrieved_contexts, answer)
-        elif ground_truth_context:
-            return self._evaluate_context_recall_with_ground_truth(retrieved_contexts, ground_truth_context)
         else:
             return {"score": 0.5, "method": "unknown", "reasoning": "No ground truth or answer provided"}
     
@@ -447,25 +457,192 @@ Respond in JSON format:
     def _evaluate_context_recall_with_ground_truth(
         self,
         contexts: List[str],
-        ground_truth: str
+        ground_truth_contexts: List[str]
     ) -> Dict[str, Any]:
-        """Evaluate recall against ground truth context."""
-        combined_context = " ".join(contexts).lower()
+        """
+        Evaluate recall against ground truth contexts from golden set.
         
-        # Extract key information from ground truth
-        gt_terms = set(re.findall(WORD_PATTERN_5, ground_truth.lower()))
+        This measures what fraction of the required ground truth context snippets
+        were successfully retrieved by the RAG system.
+        
+        Args:
+            contexts: Retrieved contexts from RAG pipeline
+            ground_truth_contexts: List of minimal required context snippets
+            
+        Returns:
+            Dict with score, found/missed contexts, and reasoning
+        """
+        if not ground_truth_contexts:
+            return {"score": 1.0, "method": "ground_truth", "reasoning": "No ground truth contexts to check"}
+        
+        combined_retrieved = " ".join(contexts).lower()
+        
+        found_count = 0
+        found_contexts = []
+        missed_contexts = []
+        
+        for gt_context in ground_truth_contexts:
+            # Extract key terms from ground truth context (words >= 4 chars)
+            gt_terms = set(re.findall(WORD_PATTERN_4, gt_context.lower()))
+            
+            if not gt_terms:
+                # If no key terms, do substring match
+                if gt_context.lower() in combined_retrieved:
+                    found_count += 1
+                    found_contexts.append(gt_context)
+                else:
+                    missed_contexts.append(gt_context)
+                continue
+            
+            # Check if majority of ground truth terms appear in retrieved contexts
+            found_terms = sum(1 for term in gt_terms if term in combined_retrieved)
+            term_coverage = found_terms / len(gt_terms)
+            
+            if term_coverage >= 0.6:  # 60% of terms must be found
+                found_count += 1
+                found_contexts.append(gt_context)
+            else:
+                missed_contexts.append(gt_context)
+        
+        score = found_count / len(ground_truth_contexts)
+        
+        return {
+            "score": score,
+            "method": "ground_truth",
+            "reasoning": f"{found_count}/{len(ground_truth_contexts)} ground truth contexts retrieved",
+            "found_contexts": found_contexts,
+            "missed_contexts": missed_contexts
+        }
+    
+    def evaluate_answer_correctness(
+        self,
+        query: str,
+        answer: str,
+        ground_truth_answer: str,
+        retrieved_contexts: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Evaluate answer correctness: semantic similarity with ground truth answer.
+        
+        This measures end-to-end quality by comparing the generated answer to
+        the ideal ground truth answer from the golden set. Uses LLM-as-judge
+        to assess semantic equivalence, factual accuracy, and completeness.
+        
+        Args:
+            query: Original user query
+            answer: Generated answer from RAG system
+            ground_truth_answer: Ground truth answer from golden set
+            retrieved_contexts: Optional retrieved contexts for additional evaluation
+            
+        Returns:
+            Dict with correctness score (0-1), reasoning, and breakdown
+        """
+        if not self.client:
+            # Fallback: simple heuristic based on word overlap
+            return self._evaluate_answer_correctness_heuristic(answer, ground_truth_answer)
+        
+        contexts_text = ""
+        if retrieved_contexts:
+            contexts_text = "\n\n".join([f"[Context {i+1}]\n{ctx}" for i, ctx in enumerate(retrieved_contexts)])
+        
+        prompt = f"""You are evaluating the correctness of an AI-generated answer against a ground truth answer.
+
+QUERY: {query}
+
+GROUND TRUTH ANSWER (the ideal correct answer):
+{ground_truth_answer}
+
+GENERATED ANSWER (from RAG system):
+{answer}
+
+{"RETRIEVED CONTEXTS:\n" + contexts_text if contexts_text else ""}
+
+Task: Rate the correctness of the generated answer (0.0 to 1.0) by comparing it to the ground truth.
+
+Scoring criteria:
+- 1.0 = Semantically equivalent, all key facts present and accurate
+- 0.9 = Minor differences in phrasing, all essential information correct
+- 0.7-0.8 = Most key facts correct, minor factual discrepancies or missing details
+- 0.5-0.6 = Partially correct, some key facts present but significant omissions or errors
+- 0.3-0.4 = Minimal overlap, mostly incorrect or irrelevant
+- 0.0-0.2 = Completely incorrect or contradicts ground truth
+
+Consider:
+1. Factual accuracy: Are numerical values, names, and specific details correct?
+2. Completeness: Does it address all aspects covered in the ground truth?
+3. Semantic equivalence: Does it convey the same meaning even if worded differently?
+
+IMPORTANT: If the generated answer states "The provided contexts do not contain..." and this is factually correct (the information truly isn't in the contexts), you should evaluate based on whether this matches the ground truth expectation. If the ground truth expects a specific answer but the system correctly identifies missing information, this is still valuable but should be scored based on alignment with ground truth.
+
+Respond in JSON format:
+{{
+    "correctness_score": <float 0-1>,
+    "factual_accuracy": <float 0-1>,
+    "completeness": <float 0-1>,
+    "semantic_similarity": <float 0-1>,
+    "key_differences": ["difference1", "difference2"],
+    "reasoning": "Brief explanation of score"
+}}"""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.judge_model,
+                messages=[
+                    {"role": "system", "content": "You are an expert evaluator for RAG systems. Respond only with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"}
+            )
+            
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Empty response from LLM")
+            
+            result = json.loads(content)
+            tokens_used = response.usage.total_tokens if response.usage else 0
+            
+            return {
+                "score": result.get("correctness_score", 0.0),
+                "factual_accuracy": result.get("factual_accuracy", 0.0),
+                "completeness": result.get("completeness", 0.0),
+                "semantic_similarity": result.get("semantic_similarity", 0.0),
+                "key_differences": result.get("key_differences", []),
+                "reasoning": result.get("reasoning", ""),
+                "method": "llm_judge",
+                "tokens_used": tokens_used
+            }
+            
+        except Exception as e:
+            print(f"Warning: LLM judge failed for answer correctness, falling back to heuristic: {e}")
+            return self._evaluate_answer_correctness_heuristic(answer, ground_truth_answer)
+    
+    def _evaluate_answer_correctness_heuristic(
+        self,
+        answer: str,
+        ground_truth_answer: str
+    ) -> Dict[str, Any]:
+        """Heuristic answer correctness based on word overlap."""
+        # Extract key terms from both answers
+        answer_terms = set(re.findall(WORD_PATTERN_4, answer.lower()))
+        gt_terms = set(re.findall(WORD_PATTERN_4, ground_truth_answer.lower()))
         
         if not gt_terms:
-            return {"score": 0.5, "method": "heuristic"}
+            return {"score": 0.5, "method": "heuristic", "reasoning": "No key terms in ground truth"}
         
-        # Check how many ground truth terms are in retrieved contexts
-        found = sum(1 for term in gt_terms if term in combined_context)
-        score = found / len(gt_terms)
+        # Calculate Jaccard similarity
+        intersection = answer_terms & gt_terms
+        union = answer_terms | gt_terms
+        
+        if not union:
+            return {"score": 0.0, "method": "heuristic", "reasoning": "No terms to compare"}
+        
+        score = len(intersection) / len(union)
         
         return {
             "score": score,
             "method": "heuristic",
-            "reasoning": f"{found}/{len(gt_terms)} ground truth terms retrieved"
+            "reasoning": f"Term overlap: {len(intersection)}/{len(union)} terms in common"
         }
     
     def evaluate_rag_response(
@@ -473,7 +650,8 @@ Respond in JSON format:
         query: str,
         answer: str,
         retrieved_contexts: List[str],
-        ground_truth_context: Optional[str] = None
+        ground_truth_contexts: Optional[List[str]] = None,
+        ground_truth_answer: Optional[str] = None
     ) -> StandardRAGMetrics:
         """
         Comprehensive evaluation using industry-standard metrics.
@@ -482,7 +660,8 @@ Respond in JSON format:
             query: User query
             answer: Generated answer
             retrieved_contexts: List of retrieved document chunks
-            ground_truth_context: Optional ground truth for recall calculation
+            ground_truth_contexts: Optional list of ground truth context snippets for recall
+            ground_truth_answer: Optional ground truth answer for correctness evaluation
             
         Returns:
             StandardRAGMetrics with all scores
@@ -493,12 +672,19 @@ Respond in JSON format:
         faithfulness_result = self.evaluate_faithfulness(answer, retrieved_contexts, query)
         relevance_result = self.evaluate_answer_relevance(query, answer)
         precision_result = self.evaluate_context_precision(retrieved_contexts, query)
-        recall_result = self.evaluate_context_recall(retrieved_contexts, ground_truth_context, answer)
+        recall_result = self.evaluate_context_recall(retrieved_contexts, ground_truth_contexts, answer)
         
         faithfulness_score = faithfulness_result['score']
         relevance_score = relevance_result['score']
         precision_score = precision_result['score']
         recall_score = recall_result['score']
+        
+        # Optional: Answer Correctness (if ground truth answer provided)
+        answer_correctness_score = None
+        if ground_truth_answer:
+            correctness_result = self.evaluate_answer_correctness(query, answer, ground_truth_answer, retrieved_contexts)
+            answer_correctness_score = correctness_result['score']
+            print(f"  [EVAL] Answer Correctness: {answer_correctness_score:.3f}")
         
         # Calculate RAGAS score (harmonic mean of 4 core metrics)
         # Harmonic mean = n / (1/x1 + 1/x2 + ... + 1/xn)
@@ -538,5 +724,6 @@ Respond in JSON format:
             citation_quality=citation_quality,
             ragas_score=ragas_score,
             evaluation_method=method,
+            answer_correctness=answer_correctness_score,
             tokens_used=total_tokens if total_tokens > 0 else None
         )

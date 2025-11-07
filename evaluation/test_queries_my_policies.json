@@ -1,20 +1,148 @@
 {
   "test_cases": [
-    {"id": "q1", "query": "What is the total monthly premium for my Manulife policy (ManuProtect Term II and its riders)?"},
-    {"id": "q2", "query": "What is the sum insured for my Manulife \"Total and Permanent Disability Plus Rider (II)\"?"},
-    {"id": "q3", "query": "What is the annual benefit limit for the \"GREAT SupremeHealth P PLUS\" plan?"},
-    {"id": "q4", "query": "Does the \"GREAT TravelCare Basic\" plan cover \"Adventurous leisure activities\"?"},
-    {"id": "q5", "query": "What is the policy term for my \"ManuProtect Term (II)\" basic plan?"},
-    {"id": "q6", "query": "For the GREAT SupremeHealth STANDARD plan, what is the claim limit for a \"Table 7A\" surgery?"},
-    {"id": "q7", "query": "Based on the \"GREAT SupremeHealth Premiums Table,\" what is the annual premium and the cash outlay for the \"P PLUS\" plan compared to the \"A PLUS\" plan for me (age 22)?"},
-    {"id": "q8", "query": "How does the \"GREAT TravelCare Platinum\" plan's coverage for \"Baggage delay\" (while overseas) differ from the \"Gold\" plan's coverage in terms of payout frequency and maximum limit?"},
-    {"id": "q9", "query": "Looking at my Manulife policy illustration, what is the \"Total Basic Premiums Paid To-Date\" versus the \"Total Distribution Cost To-Date\" at the end of year 5 (age 27)?"},
-    {"id": "q10", "query": "Compare the \"Emergency medical evacuation\" benefit limit for the \"GREAT TravelCare Platinum\" plan versus the \"Basic\" plan."},
-    {"id": "q11", "query": "What is the difference in the deductible for a \"Class A\" ward in a Restructured Hospital between the \"GREAT SupremeHealth P PLUS\" plan and the \"P PRIME\" plan for someone my age (under 80)?"},
-    {"id": "q12", "query": "What would my total combined annual premium be if I have my existing Manulife policy and also purchase the \"GREAT SupremeHealth B PLUS\" plan? (I am 22)."},
-    {"id": "q13", "query": "My Manulife \"Critical Care Enhancer Rider (II)\" covers \"Heart Attack of Specified Severity\". If I have this heart attack and am hospitalized in a Private Hospital, my bill is $80,000. If I have the \"GREAT SupremeHealth P PLUS\" plan, how much do I need to pay out-of-pocket for this bill? (Assume I am under 80 and have not paid any deductible this year)."},
-    {"id": "q14", "query": "I have the \"GREAT SupremeHealth P PLUS\" plan with the \"GREAT TotalCare P SIGNATURE\" rider. I am admitted to a Private Hospital for surgery, and my total bill is $100,000. How much is my total out-of-pocket expense, considering the deductible, co-insurance, and the \"Loss Limit\" from the rider? (Assume I am under 80)."},
-    {"id": "q15", "query": "My Manulife plan provides a $1,000,000 benefit for \"Total and Permanent Disability (TPD)\". If I suffer an accident that results in TPD, does the \"GREAT SupremeHealth P PLUS\" plan offer any additional lump sum payout, or does it only cover the related hospital and treatment bills?"},
-    {"id": "q16", "query": "I am 22. What is the total premium I will pay for just the riders on my Manulife plan over the first 10 years, and how does this compare to the total \"Total Distribution Cost\" for those same riders over that 10-year period?"}
+    {
+      "id": "q1",
+      "query": "What is the total monthly premium for my Manulife policy (ManuProtect Term II and its riders)?",
+      "ground_truth_answer": "The total monthly premium for your Manulife policy is $127.16, which includes the basic plan premium of $23.94 and the riders' premiums totaling $103.22.",
+      "ground_truth_contexts": [
+        "Monthly Premium: $23.94 for ManuProtect Term (II) basic plan",
+        "Total and Permanent Disability Plus Rider (II): $72.16 per month",
+        "Critical Care Enhancer Rider (II): $31.06 per month",
+        "Total Monthly Premium: $127.16"
+      ]
+    },
+    {
+      "id": "q2",
+      "query": "What is the sum insured for my Manulife \"Total and Permanent Disability Plus Rider (II)\"?",
+      "ground_truth_answer": "The sum insured for the Total and Permanent Disability Plus Rider (II) is $1,000,000.",
+      "ground_truth_contexts": [
+        "Total and Permanent Disability Plus Rider (II): Sum Insured: $1,000,000"
+      ]
+    },
+    {
+      "id": "q3",
+      "query": "What is the annual benefit limit for the \"GREAT SupremeHealth P PLUS\" plan?",
+      "ground_truth_answer": "The GREAT SupremeHealth P PLUS plan has an annual benefit limit of $550,000.",
+      "ground_truth_contexts": [
+        "GREAT SupremeHealth P PLUS: Annual Benefit Limit: $550,000"
+      ]
+    },
+    {
+      "id": "q4",
+      "query": "Does the \"GREAT TravelCare Basic\" plan cover \"Adventurous leisure activities\"?",
+      "ground_truth_answer": "No, the GREAT TravelCare Basic plan does not cover adventurous leisure activities. This coverage is only available in the Gold and Platinum plans.",
+      "ground_truth_contexts": [
+        "GREAT TravelCare Basic: Adventurous leisure activities: Not Covered",
+        "GREAT TravelCare Gold: Adventurous leisure activities: Covered",
+        "GREAT TravelCare Platinum: Adventurous leisure activities: Covered"
+      ]
+    },
+    {
+      "id": "q5",
+      "query": "What is the policy term for my \"ManuProtect Term (II)\" basic plan?",
+      "ground_truth_answer": "The policy term for the ManuProtect Term (II) basic plan is until age 65.",
+      "ground_truth_contexts": [
+        "ManuProtect Term (II): Policy Term: To Age 65"
+      ]
+    },
+    {
+      "id": "q6",
+      "query": "For the GREAT SupremeHealth STANDARD plan, what is the claim limit for a \"Table 7A\" surgery?",
+      "ground_truth_answer": "For the GREAT SupremeHealth STANDARD plan, the claim limit for a Table 7A surgery is $30,000.",
+      "ground_truth_contexts": [
+        "GREAT SupremeHealth STANDARD: Table 7A Surgery: Claim Limit: $30,000"
+      ]
+    },
+    {
+      "id": "q7",
+      "query": "Based on the \"GREAT SupremeHealth Premiums Table,\" what is the annual premium and the cash outlay for the \"P PLUS\" plan compared to the \"A PLUS\" plan for me (age 22)?",
+      "ground_truth_answer": "For age 22, the P PLUS plan has an annual premium of $1,590 with a cash outlay of $1,193, while the A PLUS plan has an annual premium of $2,292 with a cash outlay of $1,719.",
+      "ground_truth_contexts": [
+        "GREAT SupremeHealth P PLUS: Age 22: Annual Premium: $1,590, Cash Outlay: $1,193",
+        "GREAT SupremeHealth A PLUS: Age 22: Annual Premium: $2,292, Cash Outlay: $1,719"
+      ]
+    },
+    {
+      "id": "q8",
+      "query": "How does the \"GREAT TravelCare Platinum\" plan's coverage for \"Baggage delay\" (while overseas) differ from the \"Gold\" plan's coverage in terms of payout frequency and maximum limit?",
+      "ground_truth_answer": "The Platinum plan provides $200 for every 6 hours of delay with a maximum limit of $1,000, while the Gold plan provides $100 for every 6 hours of delay with a maximum limit of $500.",
+      "ground_truth_contexts": [
+        "GREAT TravelCare Platinum: Baggage delay (overseas): $200 for every 6 hours, Maximum: $1,000",
+        "GREAT TravelCare Gold: Baggage delay (overseas): $100 for every 6 hours, Maximum: $500"
+      ]
+    },
+    {
+      "id": "q9",
+      "query": "Looking at my Manulife policy illustration, what is the \"Total Basic Premiums Paid To-Date\" versus the \"Total Distribution Cost To-Date\" at the end of year 5 (age 27)?",
+      "ground_truth_answer": "At the end of year 5 (age 27), the Total Basic Premiums Paid To-Date is $1,436, and the Total Distribution Cost To-Date is $358.",
+      "ground_truth_contexts": [
+        "Year 5 (Age 27): Total Basic Premiums Paid To-Date: $1,436",
+        "Year 5 (Age 27): Total Distribution Cost To-Date: $358"
+      ]
+    },
+    {
+      "id": "q10",
+      "query": "Compare the \"Emergency medical evacuation\" benefit limit for the \"GREAT TravelCare Platinum\" plan versus the \"Basic\" plan.",
+      "ground_truth_answer": "The Platinum plan has an emergency medical evacuation benefit limit of $500,000, while the Basic plan has a limit of $100,000.",
+      "ground_truth_contexts": [
+        "GREAT TravelCare Platinum: Emergency medical evacuation: $500,000",
+        "GREAT TravelCare Basic: Emergency medical evacuation: $100,000"
+      ]
+    },
+    {
+      "id": "q11",
+      "query": "What is the difference in the deductible for a \"Class A\" ward in a Restructured Hospital between the \"GREAT SupremeHealth P PLUS\" plan and the \"P PRIME\" plan for someone my age (under 80)?",
+      "ground_truth_answer": "For someone under 80, the P PLUS plan has a deductible of $3,500 for a Class A ward in a Restructured Hospital, while the P PRIME plan has a deductible of $5,000. The difference is $1,500.",
+      "ground_truth_contexts": [
+        "GREAT SupremeHealth P PLUS: Class A ward (Restructured Hospital): Deductible (Under 80): $3,500",
+        "GREAT SupremeHealth P PRIME: Class A ward (Restructured Hospital): Deductible (Under 80): $5,000"
+      ]
+    },
+    {
+      "id": "q12",
+      "query": "What would my total combined annual premium be if I have my existing Manulife policy and also purchase the \"GREAT SupremeHealth B PLUS\" plan? (I am 22).",
+      "ground_truth_answer": "Your existing Manulife policy costs $1,525.92 per year ($127.16 x 12). The GREAT SupremeHealth B PLUS plan for age 22 costs $324 per year. The total combined annual premium would be $1,849.92.",
+      "ground_truth_contexts": [
+        "Manulife Total Monthly Premium: $127.16",
+        "GREAT SupremeHealth B PLUS: Age 22: Annual Premium: $324"
+      ]
+    },
+    {
+      "id": "q13",
+      "query": "My Manulife \"Critical Care Enhancer Rider (II)\" covers \"Heart Attack of Specified Severity\". If I have this heart attack and am hospitalized in a Private Hospital, my bill is $80,000. If I have the \"GREAT SupremeHealth P PLUS\" plan, how much do I need to pay out-of-pocket for this bill? (Assume I am under 80 and have not paid any deductible this year).",
+      "ground_truth_answer": "For a Private Hospital admission with the P PLUS plan (age under 80), you would pay a deductible of $3,500 plus 10% co-insurance on the remaining amount. Out-of-pocket = $3,500 + (0.10 x $76,500) = $3,500 + $7,650 = $11,150.",
+      "ground_truth_contexts": [
+        "GREAT SupremeHealth P PLUS: Private Hospital: Deductible (Under 80): $3,500",
+        "GREAT SupremeHealth P PLUS: Private Hospital: Co-insurance: 10%"
+      ]
+    },
+    {
+      "id": "q14",
+      "query": "I have the \"GREAT SupremeHealth P PLUS\" plan with the \"GREAT TotalCare P SIGNATURE\" rider. I am admitted to a Private Hospital for surgery, and my total bill is $100,000. How much is my total out-of-pocket expense, considering the deductible, co-insurance, and the \"Loss Limit\" from the rider? (Assume I am under 80).",
+      "ground_truth_answer": "With the P PLUS plan, you pay a $3,500 deductible and 10% co-insurance on the remaining $96,500 = $9,650, totaling $13,150. The GREAT TotalCare P SIGNATURE rider reduces your out-of-pocket to the Loss Limit of $5,000.",
+      "ground_truth_contexts": [
+        "GREAT SupremeHealth P PLUS: Private Hospital: Deductible (Under 80): $3,500",
+        "GREAT SupremeHealth P PLUS: Private Hospital: Co-insurance: 10%",
+        "GREAT TotalCare P SIGNATURE: Loss Limit: $5,000"
+      ]
+    },
+    {
+      "id": "q15",
+      "query": "My Manulife plan provides a $1,000,000 benefit for \"Total and Permanent Disability (TPD)\". If I suffer an accident that results in TPD, does the \"GREAT SupremeHealth P PLUS\" plan offer any additional lump sum payout, or does it only cover the related hospital and treatment bills?",
+      "ground_truth_answer": "The GREAT SupremeHealth P PLUS plan is a medical expense plan that only covers hospital and treatment bills. It does not provide any additional lump sum payout for Total and Permanent Disability.",
+      "ground_truth_contexts": [
+        "GREAT SupremeHealth P PLUS: Coverage Type: Medical Expense Coverage (no lump sum for TPD)"
+      ]
+    },
+    {
+      "id": "q16",
+      "query": "I am 22. What is the total premium I will pay for just the riders on my Manulife plan over the first 10 years, and how does this compare to the total \"Total Distribution Cost\" for those same riders over that 10-year period?",
+      "ground_truth_answer": "The riders' monthly premium is $103.22 ($72.16 + $31.06). Over 10 years: $103.22 x 12 x 10 = $12,386.40. The Total Distribution Cost for riders over 10 years needs to be summed from the policy illustration table for years 1-10.",
+      "ground_truth_contexts": [
+        "Total and Permanent Disability Plus Rider (II): Monthly Premium: $72.16",
+        "Critical Care Enhancer Rider (II): Monthly Premium: $31.06",
+        "Policy Illustration: Years 1-10 Total Distribution Cost for Riders"
+      ]
+    }
   ]
 }
