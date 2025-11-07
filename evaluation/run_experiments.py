@@ -128,15 +128,7 @@ def load_queries() -> List[Dict[str, Any]]:
     """
     queries: List[Dict[str, Any]] = []
 
-    # custom queries (general, domain-agnostic seeds)
-    try:
-        with open('evaluation/custom_queries.json', 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        custom_queries = data.get('queries', [])
-        queries.extend(custom_queries)
-        print(f"Loaded {len(custom_queries)} queries from custom_queries.json")
-    except FileNotFoundError:
-        print('evaluation/custom_queries.json not found.')
+    
 
     # personal policy tests (my_policies)
     try:

@@ -58,7 +58,7 @@ python test_experimental_processor.py
 python evaluation/run_experiments.py
 ```
 
-By default the harness loads queries from `evaluation/ground_truth.json` and `evaluation/custom_queries.json` (your experiment configuration may load `evaluation/test_queries_my_policies.json` if configured).
+By default the harness loads queries from `evaluation/ground_truth.json` and from per-batch test files such as `evaluation/test_queries_my_policies.json`.
 
 ## What the harness does
 - Loads configured test queries.
@@ -113,7 +113,7 @@ EXPERIMENT_CONFIGS["Exp_Custom"] = {
 }
 ```
 
-To add a test query, append to `evaluation/custom_queries.json` using the same schema as existing entries (id, query, category, expected_keywords, notes).
+To add a test query, append to the appropriate per-batch test file (for example `evaluation/test_queries_my_policies.json`) using the same schema as existing entries (id, query, category, expected_keywords, notes).
 
 ## Evaluator modes
 

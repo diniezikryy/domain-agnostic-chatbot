@@ -141,11 +141,23 @@ class HybridSearchEngine:
             # Load FAISS index
             self.faiss_index = faiss.read_index(str(index_file))
 
-            # Load chunks
+            # Load chunks (and optional precomputed embeddings if present)
             with open(chunks_file, 'rb') as f:
                 data = pickle.load(f)
-                self.faiss_chunks = data['chunks']
+                self.faiss_chunks = data.get('chunks', [])
                 self.faiss_metadata = data.get('metadata', [])
+                # embeddings may be present when index was created via SearchIndexBuilder
+                embeddings = data.get('embeddings')
+                if embeddings is not None:
+                    try:
+                        self.faiss_embeddings = np.array(embeddings).astype('float32')
+                        # ensure normalized for cosine similarity
+                        faiss.normalize_L2(self.faiss_embeddings)
+                    except Exception:
+                        # If embeddings cannot be loaded, ignore and keep None
+                        self.faiss_embeddings = None
+                else:
+                    self.faiss_embeddings = None
 
             # Initialize embedding generator for query embeddings
             if not self.embedding_generator:
@@ -175,7 +187,7 @@ class HybridSearchEngine:
             print(f"Error loading BM25 index: {e}")
             return False
 
-    def hybrid_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def hybrid_search(self, query: str, top_k: int = 10, allowed_doc_ids: Optional[set] = None) -> List[Dict[str, Any]]:
         """
         Perform hybrid search combining FAISS and BM25 results.
 
@@ -188,11 +200,11 @@ class HybridSearchEngine:
             return []
 
         try:
-            # Get FAISS results (semantic search)
-            faiss_results = self._faiss_search(query, top_k)
+            # Get FAISS results (semantic search). Pass allowed_doc_ids to scope search when provided.
+            faiss_results = self._faiss_search(query, top_k, allowed_doc_ids)
 
             # Get BM25 results (keyword search)
-            bm25_results = self._bm25_search(query, top_k)
+            bm25_results = self._bm25_search(query, top_k, allowed_doc_ids)
 
             # Combine and rank results
             combined_results = self._combine_results(faiss_results, bm25_results, top_k)
@@ -203,7 +215,7 @@ class HybridSearchEngine:
             print(f"Error in hybrid search: {e}")
             return []
 
-    def _faiss_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+    def _faiss_search(self, query: str, top_k: int, allowed_doc_ids: Optional[set] = None) -> List[Dict[str, Any]]:
         """Perform FAISS semantic search."""
         try:
             # Generate query embedding
@@ -217,27 +229,64 @@ class HybridSearchEngine:
             query_embedding = query_embedding.reshape(1, -1).astype('float32')
             faiss.normalize_L2(query_embedding)
 
-            # Search
-            scores, indices = self.faiss_index.search(query_embedding, top_k)
-
             results = []
-            for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
-                if idx < len(self.faiss_chunks):
+
+            # If we have the raw embeddings available, compute similarity only on the
+            # subset of chunks that belong to allowed_doc_ids. This provides a true
+            # pre-retrieval scoping mechanism rather than filtering after a global top-k.
+            if getattr(self, 'faiss_embeddings', None) is not None and allowed_doc_ids is not None:
+                # Map metadata filenames to indices
+                allowed_indices = [i for i, m in enumerate(self.faiss_metadata) if m.get('filename') in allowed_doc_ids]
+
+                if not allowed_indices:
+                    return []
+
+                # Normalize and compute dot-product similarity against the selected embeddings
+                # Ensure query_embedding is normalized similarly
+                q = query_embedding.reshape(1, -1).astype('float32')
+                faiss.normalize_L2(q)
+
+                subset_embeddings = self.faiss_embeddings[allowed_indices]
+                # compute similarities
+                sims = np.dot(subset_embeddings, q.T).squeeze()
+
+                # pick top_k from subset
+                top_order = np.argsort(sims)[::-1][:top_k]
+                for rank, idx_in_subset in enumerate(top_order):
+                    idx = allowed_indices[idx_in_subset]
                     results.append({
                         'content': self.faiss_chunks[idx],
-                        'score': float(score),
+                        'score': float(sims[idx_in_subset]),
                         'source': 'faiss',
-                        'rank': i,
+                        'rank': rank,
                         'metadata': self.faiss_metadata[idx] if idx < len(self.faiss_metadata) else {}
                     })
 
-            return results
+                return results
+
+            # Fallback: use FAISS index search and then filter by allowed_doc_ids if provided.
+            scores, indices = self.faiss_index.search(query_embedding, top_k if allowed_doc_ids is None else max(top_k, len(self.faiss_chunks)))
+
+            for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
+                if idx < len(self.faiss_chunks):
+                    meta = self.faiss_metadata[idx] if idx < len(self.faiss_metadata) else {}
+                    if allowed_doc_ids is None or meta.get('filename') in allowed_doc_ids:
+                        results.append({
+                            'content': self.faiss_chunks[idx],
+                            'score': float(score),
+                            'source': 'faiss',
+                            'rank': i,
+                            'metadata': meta
+                        })
+
+            # If we requested more than top_k to allow for filtering, trim to top_k
+            return results[:top_k]
 
         except Exception as e:
             print(f"Error in FAISS search: {e}")
             return []
 
-    def _bm25_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+    def _bm25_search(self, query: str, top_k: int, allowed_doc_ids: Optional[set] = None) -> List[Dict[str, Any]]:
         """Perform BM25 keyword search."""
         try:
             # Tokenize query
@@ -246,12 +295,18 @@ class HybridSearchEngine:
             # Get BM25 scores
             scores = self.bm25_index.get_scores(query_tokens)
 
+            # If allowed_doc_ids provided, zero-out scores for disallowed chunks (pre-retrieval scope)
+            if allowed_doc_ids is not None:
+                for i, m in enumerate(self.bm25_metadata):
+                    if m.get('filename') not in allowed_doc_ids:
+                        scores[i] = -np.inf
+
             # Get top results
             top_indices = np.argsort(scores)[::-1][:top_k]
 
             results = []
             for i, idx in enumerate(top_indices):
-                if scores[idx] > 0:  # Only include positive scores
+                if scores[idx] != -np.inf and scores[idx] > 0:  # Only include positive scores
                     results.append({
                         'content': self.bm25_chunks[idx],
                         'score': float(scores[idx]),
@@ -315,7 +370,7 @@ class HybridSearchEngine:
 
         return combined[:top_k]
 
-    def vector_only_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def vector_only_search(self, query: str, top_k: int = 10, allowed_doc_ids: Optional[set] = None) -> List[Dict[str, Any]]:
         """
         Perform vector-only search using FAISS (no BM25).
         Used for experiments to compare hybrid vs. pure semantic search.
@@ -332,8 +387,8 @@ class HybridSearchEngine:
             return []
 
         try:
-            # Get FAISS results only
-            faiss_results = self._faiss_search(query, top_k)
+            # Get FAISS results only (respect allowed_doc_ids when provided)
+            faiss_results = self._faiss_search(query, top_k, allowed_doc_ids)
             
             # Format results to match hybrid search output
             for result in faiss_results:

@@ -196,17 +196,28 @@ class QueryProcessor:
 
             expanded_query = self._expand_query(query)
 
-            raw_search_results = self.search_engine.hybrid_search(
-                query=expanded_query, # Use the expanded query
-                top_k=50
-            )
-            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
-
             is_personal_batch = (target_batch == "my_policies")
 
+            # If this is a personal batch and the user has policies owned listed in their
+            # profile, scope the search to those documents *before* retrieval. This avoids
+            # false negatives when relevant chunks are not in the global top-K.
+            allowed_doc_ids = None
+            if is_personal_batch and self.user_profile and self.user_profile.get('policies_owned'):
+                allowed_doc_ids = set(self.user_profile.get('policies_owned', []))
+
+            raw_search_results = self.search_engine.hybrid_search(
+                query=expanded_query, # Use the expanded query
+                top_k=50,
+                allowed_doc_ids=allowed_doc_ids
+            )
+            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search (scoped: {bool(allowed_doc_ids)}).")
+
             relevant_results = raw_search_results
-            if is_personal_batch:
+            if is_personal_batch and not allowed_doc_ids:
+                # If operating in personal batch mode but we couldn't scope the search
+                # because the profile lacks policies, fall back to post-retrieval filtering.
                 if self.user_profile:
+                    print("Warning: No 'policies_owned' in profile to scope search; applying post-filter as fallback.")
                     relevant_results = self._filter_results_by_profile(raw_search_results)
                 else:
                     print("Warning: Operating in personal batch mode but no user profile loaded.")
