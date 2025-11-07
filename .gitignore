@@ -320,3 +320,7 @@ Icon?
 
 # Personal Info
 user_profile.json
+
+# Evaluation reports (generated on each run, can be large)
+evaluation/results/*.json
+evaluation/results/**/*.json

@@ -113,12 +113,14 @@ GENERATED ANSWER:
 {answer}
 
 Task: Rate the faithfulness of the answer (0.0 to 1.0) where:
-- 1.0 = Every claim in the answer is directly supported by the contexts
+- 1.0 = Every claim in the answer is directly supported by the contexts, OR the answer correctly states that the contexts don't contain the needed information
 - 0.8 = Most claims supported, minor unsupported details
 - 0.6 = Significant claims supported, but some unsupported information
 - 0.4 = Mix of supported and unsupported claims
 - 0.2 = Few claims supported by contexts
-- 0.0 = Answer contains no information from contexts or contradicts them
+- 0.0 = Answer makes factual claims that contradict or are not supported by the contexts
+
+IMPORTANT: If the answer honestly states that the contexts don't contain the requested information (e.g., "The provided contexts do not contain..."), this should score 1.0 for faithfulness, as it's accurately representing the limitations of the retrieved contexts rather than hallucinating information.
 
 Identify:
 1. Supported claims (directly from contexts)
@@ -466,28 +468,6 @@ Respond in JSON format:
             "reasoning": f"{found}/{len(gt_terms)} ground truth terms retrieved"
         }
     
-    def calculate_ragas_score(
-        self,
-        faithfulness: float,
-        answer_relevance: float,
-        context_precision: float,
-        context_recall: float
-    ) -> float:
-        """
-        Calculate RAGAS score (harmonic mean of core metrics).
-        
-        RAGAS uses harmonic mean to ensure balanced performance across all dimensions.
-        """
-        metrics = [faithfulness, answer_relevance, context_precision, context_recall]
-        
-        # Harmonic mean (more sensitive to low scores than arithmetic mean)
-        if all(m > 0 for m in metrics):
-            harmonic_mean = len(metrics) / sum(1/m for m in metrics)
-        else:
-            harmonic_mean = 0.0
-        
-        return harmonic_mean
-    
     def evaluate_rag_response(
         self,
         query: str,
@@ -530,6 +510,8 @@ Respond in JSON format:
             ragas_score = 0.0
         
         # Additional metrics
+        # RAGAS standard: hallucination is the inverse of faithfulness
+        # Low faithfulness = high hallucination (answer contains unsupported claims)
         hallucination_score = 1.0 - faithfulness_score  # Inverse of faithfulness
         
         # Citation quality (simple heuristic)

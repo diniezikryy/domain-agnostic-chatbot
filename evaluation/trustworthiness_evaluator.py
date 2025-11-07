@@ -96,7 +96,15 @@ class TrustworthinessEvaluator:
         }
     
     def analyze_hallucination(self, response: str, test_case: Dict) -> Dict:
-        # analyse response for hallucinations
+        """
+        Analyze response for hallucinations using forbidden keyword detection or heuristics.
+        
+        NOTE: This measures a DIFFERENT type of hallucination than RAGAS:
+        - RAGAS hallucination = 1 - faithfulness (unsupported claims vs retrieved contexts)
+        - This evaluator's hallucination = forbidden content OR suspicious claim patterns
+        
+        Returns 'trust_hallucination_score' to distinguish from RAGAS metric.
+        """
         response_lower = response.lower()
         
         # Check for forbidden content (potential hallucinations)
@@ -114,8 +122,31 @@ class TrustworthinessEvaluator:
                 expected_found.append(keyword)
         
         # Calculate scores
-        hallucination_score = len(forbidden_found) / len(forbidden_keywords) if forbidden_keywords else 0
-        accuracy_score = len(expected_found) / len(expected_keywords) if expected_keywords else 0
+        if forbidden_keywords:
+            hallucination_score = len(forbidden_found) / len(forbidden_keywords)
+        else:
+            # Fallback heuristic when no forbidden keywords are provided.
+            # Detect numeric/absolute claims and specific proper-noun-like tokens as potential hallucinations.
+            sentences = [s.strip() for s in re.split(r'[\.\?!]\s*', response) if s.strip()]
+            if not sentences:
+                hallucination_score = 0
+            else:
+                claim_pattern = re.compile(r'(\$\s?\d+)|(\d+[\,\d]*\s?(percent|%|\byears?\b|\bmonths?\b|\bdays?\b))|(\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+\b)')
+                suspicious = 0
+                for s in sentences:
+                    if claim_pattern.search(s):
+                        # treat sentence with numeric/proper-noun cluster as suspicious
+                        suspicious += 1
+                hallucination_score = min(1.0, suspicious / len(sentences))
+
+        if expected_keywords:
+            accuracy_score = len(expected_found) / len(expected_keywords)
+        else:
+            # If no expected keywords provided, fall back to a conservative estimate:
+            # measure presence of any specific indicators (numbers, sections, money) as a proxy for informativeness
+            specific_indicators = [r'\$\d+', r'\d+\s*(days|months|years|%)', r'section \d+', r'page \d+']
+            has_specific = any(re.search(pat, response_lower) for pat in specific_indicators)
+            accuracy_score = 0.0 if not has_specific else 0.5
         
         return {
             'expected_found': expected_found,
@@ -341,6 +372,34 @@ class TrustworthinessEvaluator:
         keywords_found = sum(1 for keyword in expected_keywords if keyword.lower() in response_lower)
         
         return keywords_found / len(expected_keywords)
+    
+    def evaluate_single_response(self, response: str, test_case: Dict) -> Dict:
+        """
+        Evaluate a single query-response pair for trustworthiness metrics.
+        Used by the experiment harness to get per-query metrics.
+        
+        Args:
+            response: Generated response text
+            test_case: Test case dict with query, expected_keywords, forbidden_keywords, etc.
+            
+        Returns:
+            Dict with hallucination_score, accuracy_score, completeness_score, has_specific_info
+        """
+        # 1. Hallucination & Accuracy
+        hallucination_analysis = self.analyze_hallucination(response, test_case)
+        
+        # 2. Response Quality metrics
+        quality_metrics = {
+            'has_specific_info': self.check_specific_information(response),
+            'completeness_score': self.assess_completeness(response, test_case)
+        }
+        
+        return {
+            "trust_hallucination_score": hallucination_analysis['hallucination_score'],
+            "accuracy_score": hallucination_analysis['accuracy_score'],
+            "completeness_score": quality_metrics['completeness_score'],
+            "has_specific_info": quality_metrics['has_specific_info']
+        }
     
     def calculate_overall_score(self, results: Dict) -> float:
         """Calculate overall trustworthiness score"""

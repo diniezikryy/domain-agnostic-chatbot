@@ -1,0 +1,20 @@
+{
+  "test_cases": [
+    {"id": "q1", "query": "What is the total monthly premium for my Manulife policy (ManuProtect Term II and its riders)?"},
+    {"id": "q2", "query": "What is the sum insured for my Manulife \"Total and Permanent Disability Plus Rider (II)\"?"},
+    {"id": "q3", "query": "What is the annual benefit limit for the \"GREAT SupremeHealth P PLUS\" plan?"},
+    {"id": "q4", "query": "Does the \"GREAT TravelCare Basic\" plan cover \"Adventurous leisure activities\"?"},
+    {"id": "q5", "query": "What is the policy term for my \"ManuProtect Term (II)\" basic plan?"},
+    {"id": "q6", "query": "For the GREAT SupremeHealth STANDARD plan, what is the claim limit for a \"Table 7A\" surgery?"},
+    {"id": "q7", "query": "Based on the \"GREAT SupremeHealth Premiums Table,\" what is the annual premium and the cash outlay for the \"P PLUS\" plan compared to the \"A PLUS\" plan for me (age 22)?"},
+    {"id": "q8", "query": "How does the \"GREAT TravelCare Platinum\" plan's coverage for \"Baggage delay\" (while overseas) differ from the \"Gold\" plan's coverage in terms of payout frequency and maximum limit?"},
+    {"id": "q9", "query": "Looking at my Manulife policy illustration, what is the \"Total Basic Premiums Paid To-Date\" versus the \"Total Distribution Cost To-Date\" at the end of year 5 (age 27)?"},
+    {"id": "q10", "query": "Compare the \"Emergency medical evacuation\" benefit limit for the \"GREAT TravelCare Platinum\" plan versus the \"Basic\" plan."},
+    {"id": "q11", "query": "What is the difference in the deductible for a \"Class A\" ward in a Restructured Hospital between the \"GREAT SupremeHealth P PLUS\" plan and the \"P PRIME\" plan for someone my age (under 80)?"},
+    {"id": "q12", "query": "What would my total combined annual premium be if I have my existing Manulife policy and also purchase the \"GREAT SupremeHealth B PLUS\" plan? (I am 22)."},
+    {"id": "q13", "query": "My Manulife \"Critical Care Enhancer Rider (II)\" covers \"Heart Attack of Specified Severity\". If I have this heart attack and am hospitalized in a Private Hospital, my bill is $80,000. If I have the \"GREAT SupremeHealth P PLUS\" plan, how much do I need to pay out-of-pocket for this bill? (Assume I am under 80 and have not paid any deductible this year)."},
+    {"id": "q14", "query": "I have the \"GREAT SupremeHealth P PLUS\" plan with the \"GREAT TotalCare P SIGNATURE\" rider. I am admitted to a Private Hospital for surgery, and my total bill is $100,000. How much is my total out-of-pocket expense, considering the deductible, co-insurance, and the \"Loss Limit\" from the rider? (Assume I am under 80)."},
+    {"id": "q15", "query": "My Manulife plan provides a $1,000,000 benefit for \"Total and Permanent Disability (TPD)\". If I suffer an accident that results in TPD, does the \"GREAT SupremeHealth P PLUS\" plan offer any additional lump sum payout, or does it only cover the related hospital and treatment bills?"},
+    {"id": "q16", "query": "I am 22. What is the total premium I will pay for just the riders on my Manulife plan over the first 10 years, and how does this compare to the total \"Total Distribution Cost\" for those same riders over that 10-year period?"}
+  ]
+}

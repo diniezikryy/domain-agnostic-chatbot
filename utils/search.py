@@ -315,6 +315,36 @@ class HybridSearchEngine:
 
         return combined[:top_k]
 
+    def vector_only_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Perform vector-only search using FAISS (no BM25).
+        Used for experiments to compare hybrid vs. pure semantic search.
+        
+        Args:
+            query: Search query string
+            top_k: Number of results to return
+            
+        Returns:
+            List of search results with content, score, and metadata
+        """
+        if not self.faiss_index:
+            print("FAISS index not loaded")
+            return []
+
+        try:
+            # Get FAISS results only
+            faiss_results = self._faiss_search(query, top_k)
+            
+            # Format results to match hybrid search output
+            for result in faiss_results:
+                result['combined_score'] = result['score']
+            
+            return faiss_results
+
+        except Exception as e:
+            print(f"Error in vector-only search: {e}")
+            return []
+
     def get_stats(self) -> Dict[str, Any]:
         """Get search engine statistics."""
         return {
