@@ -17,6 +17,7 @@ from openai import OpenAI
 
 from utils.search import HybridSearchEngine
 from batch_manager import BatchManager
+from research import DeepResearch  # Import the deep research integration
 
 class QueryProcessor:
 
@@ -35,6 +36,7 @@ class QueryProcessor:
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.user_profile = self._load_user_profile() # Load profile on initialization
+        self.deep_research = DeepResearch()  # Initialize deep research capability
 
     def _load_user_profile(self) -> Optional[Dict[str, Any]]:
         """Loads the user profile from user_profile.json in the project root."""
@@ -215,11 +217,32 @@ class QueryProcessor:
             unique_results = self._deduplicate_results(relevant_results)
             print(f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication.")
 
+            # If no results from RAG, try deep research
             if not unique_results:
-                if is_personal_batch and self.user_profile:
-                    return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned',[]))}') for the question: '{query}'."
+                print("No results from RAG, attempting deep research...")
+                research_results = self.deep_research.research(query)
+                
+                if research_results and research_results.get('answer'):
+                    # Format the deep research response
+                    if is_personal_batch and self.user_profile:
+                        prefix = f"I couldn't find information in your policy documents, but here's what I found through research:\n\n"
+                    else:
+                        prefix = "Based on my research:\n\n"
+                    
+                    response = prefix + research_results['answer']
+                    
+                    # Add sources if available
+                    if research_results.get('sources'):
+                        response += "\n\nSources:\n"
+                        for idx, source in enumerate(research_results['sources'], 1):
+                            response += f"{idx}. {source['title']}\n   {source['url']}\n"
+                    
+                    return response
                 else:
-                    return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
+                    if is_personal_batch and self.user_profile:
+                        return f"I couldn't find relevant information in your policy documents or through research for the question: '{query}'."
+                    else:
+                        return f"No relevant information found in the documents or through research for the question: '{query}'."
 
             response = self._generate_response(query, unique_results, is_personal_batch)
 

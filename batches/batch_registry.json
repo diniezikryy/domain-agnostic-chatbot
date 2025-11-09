@@ -2,16 +2,16 @@
   "batches": {
     "user_1": {
       "id": "user_1",
-      "name": "test's Policies",
-      "description": "Personal policies for user test",
-      "doc_count": 3,
-      "chunk_count": 173,
-      "created_at": "2025-11-05T00:05:19.287904",
+      "name": "a's Policies",
+      "description": "Personal policies for user a",
+      "doc_count": 2,
+      "chunk_count": 65,
+      "created_at": "2025-11-07T09:49:38.906073",
       "faiss_path": "batches/user_1/faiss_index",
       "bm25_path": "batches/user_1/bm25_index.pkl",
       "metadata_path": "batches/user_1/metadata.json"
     }
   },
   "default_batch": null,
-  "last_modified": "2025-11-05T00:05:19.288903"
+  "last_modified": "2025-11-07T09:49:38.906073"
 }
