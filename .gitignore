@@ -320,3 +320,21 @@ Icon?
 
 # Personal Info
 user_profile.json
+
+# Local virtual environment used by this developer (do not commit)
+.venv-ragas/
+
+# Experiment tracking and large outputs
+mlruns/
+evaluation/results/
+results/
+
+# Ignore additional local user profile variants
+user_profile_basic.json
+user_profile_local.json
+user_profile_*.json
+
+# Local binary/data caches and exports
+*.pkl
+*.parquet
+*.h5
