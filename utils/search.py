@@ -175,13 +175,14 @@ class HybridSearchEngine:
             print(f"Error loading BM25 index: {e}")
             return False
 
-    def hybrid_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def hybrid_search(self, query: str, top_k: int = 10, allowed_doc_ids: Optional[set] = None) -> List[Dict[str, Any]]:
         """
         Perform hybrid search combining FAISS and BM25 results.
 
         Args:
             query: Search query string
             top_k: Number of results to return
+            allowed_doc_ids: Optional set of document IDs (filenames) to filter results
         """
         if not self.faiss_index or not self.bm25_index:
             print("Indexes not loaded")
@@ -189,10 +190,10 @@ class HybridSearchEngine:
 
         try:
             # Get FAISS results (semantic search)
-            faiss_results = self._faiss_search(query, top_k)
+            faiss_results = self._faiss_search(query, top_k, allowed_doc_ids)
 
             # Get BM25 results (keyword search)
-            bm25_results = self._bm25_search(query, top_k)
+            bm25_results = self._bm25_search(query, top_k, allowed_doc_ids)
 
             # Combine and rank results
             combined_results = self._combine_results(faiss_results, bm25_results, top_k)
@@ -203,8 +204,14 @@ class HybridSearchEngine:
             print(f"Error in hybrid search: {e}")
             return []
 
-    def _faiss_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Perform FAISS semantic search."""
+    def _faiss_search(self, query: str, top_k: int, allowed_doc_ids: Optional[set] = None) -> List[Dict[str, Any]]:
+        """Perform FAISS semantic search.
+        
+        Args:
+            query: Search query string
+            top_k: Number of results to return
+            allowed_doc_ids: Optional set of document IDs (filenames) to filter results
+        """
         try:
             # Generate query embedding
             query_embedding = self.embedding_generator.generate_single_embedding(query)
@@ -223,12 +230,20 @@ class HybridSearchEngine:
             results = []
             for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
                 if idx < len(self.faiss_chunks):
+                    metadata = self.faiss_metadata[idx] if idx < len(self.faiss_metadata) else {}
+                    
+                    # Filter by allowed_doc_ids if provided
+                    if allowed_doc_ids is not None:
+                        filename = metadata.get('filename')
+                        if filename not in allowed_doc_ids:
+                            continue
+                    
                     results.append({
                         'content': self.faiss_chunks[idx],
                         'score': float(score),
                         'source': 'faiss',
                         'rank': i,
-                        'metadata': self.faiss_metadata[idx] if idx < len(self.faiss_metadata) else {}
+                        'metadata': metadata
                     })
 
             return results
@@ -237,8 +252,14 @@ class HybridSearchEngine:
             print(f"Error in FAISS search: {e}")
             return []
 
-    def _bm25_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Perform BM25 keyword search."""
+    def _bm25_search(self, query: str, top_k: int, allowed_doc_ids: Optional[set] = None) -> List[Dict[str, Any]]:
+        """Perform BM25 keyword search.
+        
+        Args:
+            query: Search query string
+            top_k: Number of results to return
+            allowed_doc_ids: Optional set of document IDs (filenames) to filter results
+        """
         try:
             # Tokenize query
             query_tokens = query.lower().split()
@@ -252,12 +273,20 @@ class HybridSearchEngine:
             results = []
             for i, idx in enumerate(top_indices):
                 if scores[idx] > 0:  # Only include positive scores
+                    metadata = self.bm25_metadata[idx] if idx < len(self.bm25_metadata) else {}
+                    
+                    # Filter by allowed_doc_ids if provided
+                    if allowed_doc_ids is not None:
+                        filename = metadata.get('filename')
+                        if filename not in allowed_doc_ids:
+                            continue
+                    
                     results.append({
                         'content': self.bm25_chunks[idx],
                         'score': float(scores[idx]),
                         'source': 'bm25',
                         'rank': i,
-                        'metadata': self.bm25_metadata[idx] if idx < len(self.bm25_metadata) else {}
+                        'metadata': metadata
                     })
 
             return results
