@@ -11,12 +11,12 @@ import re
 import pdfplumber
 import pandas as pd
 from docx import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 class FileHandler:
     """Handles processing of various document formats."""
 
-    # Maybe can try to increase the chunk size to 2000 to prevent tables from splitting.
-    def __init__(self, chunk_size: int = 2000, chunk_overlap: int = 200):
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 150):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
@@ -178,25 +178,16 @@ class FileHandler:
         return text.strip()
 
     def _create_chunks(self, text: str) -> List[str]:
-        """Split text into chunks with overlap."""
-        if len(text) <= self.chunk_size:
-            return [text]
-
-        chunks = []
-        start = 0
-
-        # Use simple sliding window. More advanced logic could be added here.
-        while start < len(text):
-            end = start + self.chunk_size
-            chunk = text[start:end]
-            chunks.append(chunk)
-
-            move = self.chunk_size - self.chunk_overlap
-            start += move
-
-            # Ensure last chunk captures the end
-            if start + self.chunk_size > len(text) and start < len(text):
-                chunks.append(text[start:])
-                break
-
+        """Split text into chunks using a recursive character splitter."""
+        if not text:
+            return []
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            length_function=len,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        
+        chunks = text_splitter.split_text(text)
         return [c.strip() for c in chunks if c.strip()]
