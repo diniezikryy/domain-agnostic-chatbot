@@ -3,8 +3,7 @@ Query Processor
 Handles domain-agnostic query processing using hybrid FAISS + BM25 search.
 Loads user profile for personalized responses within specific batches (e.g., 'my_policies').
 
-* This is the "Comprehensive" version that relies on the detailed user_profile.json
-* to provide facts and uses the document chunks only for citation.
+* This is the True RAG version that uses only retrieved document chunks as context.
 """
 
 import os
@@ -178,7 +177,35 @@ class QueryProcessor:
             print(f"Error during query expansion: {e}")
             return query # Fallback to original query on error
 
-    def process_query(self, query: str, batch_id: str = None) -> str:
+    async def _is_context_relevant(self, query: str, context: str, model: str = "gpt-4o-mini") -> bool:
+        """Uses a fast LLM call to check if the retrieved context is relevant to the query.
+        This acts as a "Retrieval Guardrail"."""
+        guardrail_prompt = f"""You are a relevance checker. Determine if the provided context is relevant to answering the user's query.
+
+USER QUERY: {query}
+
+CONTEXT:
+{context[:500]}...
+
+Is this context relevant to answering the query? Answer ONLY with "YES" or "NO"."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": guardrail_prompt}],
+                max_tokens=5,
+                temperature=0.0,
+            )
+            
+            decision = response.choices[0].message.content.strip().upper()
+            return decision == "YES"
+        
+        except Exception as e:
+            print(f"Error in guardrail check: {e}")
+            # On error, be conservative and allow the query through
+            return True
+
+    async def process_query(self, query: str, batch_id: str = None) -> str:
         """Process a query and return the response."""
         try:
             # Determine the target batch
@@ -219,6 +246,22 @@ class QueryProcessor:
                     return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned',[]))}') for the question: '{query}'."
                 else:
                     return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
+
+            # --- Retrieval Guardrail ---
+            if unique_results:
+                top_chunk_content = unique_results[0].get('content', '')
+                is_relevant = await self._is_context_relevant(expanded_query, top_chunk_content)
+                
+                if not is_relevant:
+                    print("Guardrail triggered: Top context chunk is not relevant to the query.")
+                    if is_personal_batch and self.user_profile:
+                        policy_list = "your policy documents"
+                    else:
+                        policy_list = f"the documents in batch '{target_batch}'"
+                    return f"I was unable to find information in {policy_list} that is relevant to your question: '{query}'."
+            
+            print("Guardrail passed: Context appears relevant.")
+            # --- End of Guardrail ---
 
             response = self._generate_response(query, unique_results, is_personal_batch)
 
