@@ -235,13 +235,13 @@ class QueryProcessor:
             return f"An error occurred while processing your query. Please check logs. Error: {e}"
 
     def _generate_response(self, original_query: str, search_results: List[Dict], is_personal_batch: bool) -> str:
-        """Generate comprehensive response using retrieved chunks and potentially user profile."""
+        """Generate a RAG response using only retrieved contexts. This is a true RAG pipeline."""
         if not search_results:
             return "I couldn't find any relevant information in the documents to answer your question."
 
         context_parts = []
         max_chunks_for_context = 15
-        cited_filenames = set() # keeps track of which documents we found
+        cited_filenames = set()
 
         print(f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks...")
         for i, result in enumerate(search_results[:max_chunks_for_context], 1):
@@ -259,79 +259,42 @@ class QueryProcessor:
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        policy_data_string = ""
-        user_name = "User" # Default fallback
+        # Get user name for personalized salutation if available
+        user_name = "User"
         if is_personal_batch and self.user_profile:
-            print("Including user profile and ALL structured policy data in the prompt.")
-            profile_items = []
-            policy_data_items = []
-
             user_name = self.user_profile.get('name', 'User')
-            if user_name:
-                profile_items.append(f"- User Name: {user_name}")
-
-            # Inject ALL policy details from the comprehensive profile
-            for policy in self.user_profile.get("policy_details", []):
-                print(f"Injecting structured data for: {policy.get('filename')}")
-                policy_data_items.append(json.dumps(policy, indent=2))
-
-            # Add general profile info
-            profile_info_string = "\n\nUSER PROFILE:\n" + "\n".join(profile_items)
-
-            # Add the structured policy data
-            if policy_data_items:
-                policy_data_string = "\n\nSTRUCTURED USER POLICY DATA (FOR REASONING):\n" + "\n---\n".join(policy_data_items)
-
+        
         salutation = f"Hi {user_name},"
 
-        # --- Construct the Final Prompt ---
-        prompt_instructions = f"""You are an expert financial advisor with STRICT EVIDENCE REQUIREMENTS.
-Your task is to answer the user's question about their insurance portfolio.
+        # --- Construct the True RAG Prompt ---
+        prompt_instructions = f"""{salutation}
 
-You are given two types of context:
-1.  **STRUCTURED USER POLICY DATA:** Clean JSON data for ALL of the user's policies. This is your primary source of truth for coverage details, benefit amounts, and what policies exist.
-2.  **AVAILABLE DOCUMENTS:** A small set of messy, raw text chunks from the original PDF policy files. These are *only* for finding citations. They may not be complete and may be missing policies.
+You are an expert financial advisor. Answer the user's question based ONLY on the provided policy document excerpts.
 
-Your Task: Answer the following question:
->>> {original_query} <<<
-{profile_info_string}
-{policy_data_string}
+You MUST cite your sources using the [Source X: filename, Page Y] format.
+Every factual claim you make must be directly supported by the provided context.
+If the answer is not in the provided documents, you MUST state that the information could not be found.
+Do not make assumptions or add information not present in the sources.
 
-AVAILABLE DOCUMENTS (FOR CITATION ONLY):
---- START OF DOCUMENTS ---
+--- CONTEXT FROM POLICY DOCUMENTS ---
 {context_from_docs}
 --- END OF DOCUMENTS ---
 
-CRITICAL RESPONSE RULES:
-1.  **Trust Structured Data First:** Base your answer on the `STRUCTURED USER POLICY DATA`. This is the complete, correct information.
-2.  **Find Citation in Documents:** After finding the answer in the structured data, you MUST try to locate supporting evidence for it in the `AVAILABLE DOCUMENTS`.
-3.  **Cite Everything:** If you find a supporting citation, end the fact with [Source X: filename.pdf, Page Y].
-4.  **Handle Missing Citations:** If you find information in the `STRUCTURED USER POLICY DATA` (e.g., 'rental_vehicle_excess: 1500') but CANNOT find a matching citation in the `AVAILABLE DOCUMENTS` (the raw text), you MUST state the fact and cite the `filename` from the structured data. Example: `...S$1,500 [Source: GREAT_TravelCare.pdf, from your policy profile]`.
-5.  **Handle Missing Information:** If the information is not in the `STRUCTURED USER POLICY DATA` or the `AVAILABLE DOCUMENTS`, state that the information is not available.
-6.  **Perform Calculations:** If the user provides numbers and the policy data provides coverage amounts, perform simple calculations to help the user.
-7.  **Address the User By Name:** You MUST start the response with the exact salutation: "{salutation}". Do not invent a different name.
-8.  **Be Comprehensive:** Check ALL policies in the `STRUCTURED USER POLICY DATA` for relevance to the user's question.
-9.  **Add Sources Section:** After your complete answer, add a horizontal rule (---)
+USER QUESTION:
+{original_query}
 
-PROHIBITED:
-- Answering without citations (must use [Source X] or [Source: filename.pdf, from your policy profile]).
-- Using information *only* from the messy `AVAILABLE DOCUMENTS` if it contradicts the `STRUCTURED USER POLICY DATA`.
-- Inventing a user name or a persona for yourself.
-- Starting the response with any text other than the exact salutation: "{salutation}"
-
-Generate the answer now following all rules:
-"""
+ANSWER:"""
 
         # --- Call OpenAI API ---
         try:
             print("Sending request to OpenAI API...")
             if not self.client:
-                 raise ValueError("OpenAI client is not initialized.")
+                raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model="gpt-4o", # Keep gpt-4o for this complex reasoning task
+                model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "You are a precise, expert financial advisor. You answer questions by combining structured JSON data with citable text snippets from policy documents."},
+                    {"role": "system", "content": "You are a precise, expert financial advisor. You answer questions based ONLY on provided document excerpts and cite all sources."},
                     {"role": "user", "content": prompt_instructions}
                 ],
                 max_tokens=1500,
