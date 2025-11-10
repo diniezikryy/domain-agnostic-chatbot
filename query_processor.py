@@ -3,7 +3,8 @@ Query Processor
 Handles domain-agnostic query processing using hybrid FAISS + BM25 search.
 Loads user profile for personalized responses within specific batches (e.g., 'my_policies').
 
-* This is the True RAG version that uses only retrieved document chunks as context.
+* This is the "Comprehensive" version that relies on the detailed user_profile.json
+* to provide facts and uses the document chunks only for citation.
 """
 
 import os
@@ -178,31 +179,33 @@ class QueryProcessor:
             return query # Fallback to original query on error
 
     async def _is_context_relevant(self, query: str, context: str, model: str = "gpt-4o-mini") -> bool:
-        """Uses a fast LLM call to check if the retrieved context is relevant to the query.
-        This acts as a "Retrieval Guardrail"."""
-        guardrail_prompt = f"""You are a relevance checker. Determine if the provided context is relevant to answering the user's query.
-
-USER QUERY: {query}
-
-CONTEXT:
-{context[:500]}...
-
-Is this context relevant to answering the query? Answer ONLY with "YES" or "NO"."""
-
+        """
+        Uses a fast LLM call to check if the retrieved context is relevant to the query.
+        This acts as a "Retrieval Guardrail".
+        """
         try:
+            prompt = f"""You are a relevance-checking guardrail. Your job is to determine if the provided document context is relevant for answering the user's query.
+Respond with only a single word: YES or NO.
+
+USER QUERY:
+{query}
+
+DOCUMENT CONTEXT:
+{context}
+
+RELEVANT:
+"""
             response = self.client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": guardrail_prompt}],
-                max_tokens=5,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=3,
                 temperature=0.0,
             )
-            
             decision = response.choices[0].message.content.strip().upper()
             return decision == "YES"
-        
         except Exception as e:
-            print(f"Error in guardrail check: {e}")
-            # On error, be conservative and allow the query through
+            print(f"Warning: Context relevance check failed: {e}")
+            # Fail open: assume relevant if the check fails
             return True
 
     async def process_query(self, query: str, batch_id: str = None) -> str:
@@ -223,17 +226,28 @@ Is this context relevant to answering the query? Answer ONLY with "YES" or "NO".
 
             expanded_query = self._expand_query(query)
 
-            raw_search_results = self.search_engine.hybrid_search(
-                query=expanded_query, # Use the expanded query
-                top_k=50
-            )
-            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
-
             is_personal_batch = (target_batch == "my_policies")
 
+            # If this is a personal batch and the user has policies owned listed in their
+            # profile, scope the search to those documents *before* retrieval. This avoids
+            # false negatives when relevant chunks are not in the global top-K.
+            allowed_doc_ids = None
+            if is_personal_batch and self.user_profile and self.user_profile.get('policies_owned'):
+                allowed_doc_ids = set(self.user_profile.get('policies_owned', []))
+
+            raw_search_results = self.search_engine.hybrid_search(
+                query=expanded_query, # Use the expanded query
+                top_k=50,
+                allowed_doc_ids=allowed_doc_ids
+            )
+            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search (scoped: {bool(allowed_doc_ids)}).")
+
             relevant_results = raw_search_results
-            if is_personal_batch:
+            if is_personal_batch and not allowed_doc_ids:
+                # If operating in personal batch mode but we couldn't scope the search
+                # because the profile lacks policies, fall back to post-retrieval filtering.
                 if self.user_profile:
+                    print("Warning: No 'policies_owned' in profile to scope search; applying post-filter as fallback.")
                     relevant_results = self._filter_results_by_profile(raw_search_results)
                 else:
                     print("Warning: Operating in personal batch mode but no user profile loaded.")
@@ -247,19 +261,25 @@ Is this context relevant to answering the query? Answer ONLY with "YES" or "NO".
                 else:
                     return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
 
-            # --- Retrieval Guardrail ---
+            # --- Retrieval Guardrail (from LLM Lab 4) ---
+            print("Running retrieval guardrail...")
+
+            # We will check the relevance of the top-ranked chunk.
+            # If it's not relevant, we assume the whole retrieval failed.
             if unique_results:
                 top_chunk_content = unique_results[0].get('content', '')
+                # Use the *expanded* query for the most accurate relevance check
                 is_relevant = await self._is_context_relevant(expanded_query, top_chunk_content)
-                
+
                 if not is_relevant:
                     print("Guardrail triggered: Top context chunk is not relevant to the query.")
-                    if is_personal_batch and self.user_profile:
-                        policy_list = "your policy documents"
-                    else:
-                        policy_list = f"the documents in batch '{target_batch}'"
+                    # Get the list of policy filenames for a better error message
+                    policy_list = "your documents"
+                    if is_personal_batch and self.user_profile and self.user_profile.get('policies_owned'):
+                        policy_list = f"'{', '.join(self.user_profile.get('policies_owned'))}'"
+
                     return f"I was unable to find information in {policy_list} that is relevant to your question: '{query}'."
-            
+
             print("Guardrail passed: Context appears relevant.")
             # --- End of Guardrail ---
 
@@ -278,12 +298,15 @@ Is this context relevant to answering the query? Answer ONLY with "YES" or "NO".
             return f"An error occurred while processing your query. Please check logs. Error: {e}"
 
     def _generate_response(self, original_query: str, search_results: List[Dict], is_personal_batch: bool) -> str:
-        """Generate a RAG response using only retrieved contexts. This is a true RAG pipeline."""
+        """
+        Generate a RAG response using only retrieved contexts.
+        This is a true RAG pipeline.
+        """
         if not search_results:
             return "I couldn't find any relevant information in the documents to answer your question."
 
         context_parts = []
-        max_chunks_for_context = 15
+        max_chunks_for_context = 15 # We can keep this
         cited_filenames = set()
 
         print(f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks...")
@@ -302,14 +325,12 @@ Is this context relevant to answering the query? Answer ONLY with "YES" or "NO".
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        # Get user name for personalized salutation if available
-        user_name = "User"
-        if is_personal_batch and self.user_profile:
-            user_name = self.user_profile.get('name', 'User')
-        
+        # --- New Simple RAG Prompt ---
+        # Get user name for a polite salutation, if available.
+        # This is the *only* personalization that should be in the prompt.
+        user_name = self.user_profile.get('name', 'User') if self.user_profile else 'User'
         salutation = f"Hi {user_name},"
 
-        # --- Construct the True RAG Prompt ---
         prompt_instructions = f"""{salutation}
 
 You are an expert financial advisor. Answer the user's question based ONLY on the provided policy document excerpts.
@@ -327,21 +348,21 @@ USER QUESTION:
 {original_query}
 
 ANSWER:"""
+        # --- End of New Prompt ---
 
-        # --- Call OpenAI API ---
         try:
-            print("Sending request to OpenAI API...")
+            print("Sending request to OpenAI API (True RAG)...")
             if not self.client:
-                raise ValueError("OpenAI client is not initialized.")
+                 raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o", # Use gpt-4o for high-quality synthesis
                 messages=[
-                    {"role": "system", "content": "You are a precise, expert financial advisor. You answer questions based ONLY on provided document excerpts and cite all sources."},
+                    {"role": "system", "content": "You are a precise, expert financial advisor. You answer questions based only on the provided context and cite your sources."},
                     {"role": "user", "content": prompt_instructions}
                 ],
-                max_tokens=1500,
-                temperature=0.05,
+                max_tokens=1000, # Can be shorter now
+                temperature=0.0, # Keep it factual
                 stop=None
             )
 

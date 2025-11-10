@@ -11,11 +11,12 @@ import re
 import pdfplumber
 import pandas as pd
 from docx import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 class FileHandler:
     """Handles processing of various document formats."""
 
+    # Maybe can try to increase the chunk size to 2000 to prevent tables from splitting.
     def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 150):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -181,13 +182,17 @@ class FileHandler:
         """Split text into chunks using a recursive character splitter."""
         if not text:
             return []
-        
+
+        # This splitter is semantically aware and tries to split on
+        # paragraphs ("\n\n"), then lines ("\n"), then spaces (" "), etc.
+        # This is much better for insurance policy documents.
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
             length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""]
+            separators=["\n\n", "\n", ". ", " ", ""] # Explicitly define separators
         )
-        
+
         chunks = text_splitter.split_text(text)
+        
         return [c.strip() for c in chunks if c.strip()]
