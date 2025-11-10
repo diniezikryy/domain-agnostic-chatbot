@@ -11,6 +11,7 @@ import argparse
 import sys
 import os
 import json
+import asyncio
 from pathlib import Path
 
 # Add current directory to path for imports
@@ -19,7 +20,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from batch_manager import BatchManager
 from query_processor import QueryProcessor
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="Domain-Agnostic Document Chatbot")
 
     # Main query argument
@@ -99,7 +100,7 @@ def main():
         print(f"Question: {args.query}")
         print("Processing...")
 
-        response = query_processor.process_query(args.query)
+        response = await query_processor.process_query(args.query)
 
         print("\nResponse:")
         print("=" * 50)
@@ -112,4 +113,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
