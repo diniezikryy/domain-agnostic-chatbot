@@ -1,0 +1,49 @@
+{
+  "user_id": "TEST_USER_001",
+  "name": "Dinie",
+  "date_of_birth": "2001-08-01",
+  "smoking_status": "non-smoker",
+  "policy_tiers": {
+    "GREAT_SupremeHealth_Benefits.pdf": "P PLUS",
+    "GREAT_TravelCare.pdf": "Platinum"
+  },
+  "policies_owned": [
+    "Manulife_Policy_Illustration_REDACTED.pdf",
+    "GREAT_SupremeHealth_Benefits.pdf",
+    "GREAT_TravelCare.pdf"
+  ],
+  "policy_details": [
+    {
+      "policy_id": "POL_001_MANULIFE_TERM",
+      "filename": "Manulife_Policy_Illustration_REDACTED.pdf",
+      "insurer": "Manulife",
+      "product_name": "ManuProtect Term (II) - Renewable and Convertible",
+      "policy_type": "life_insurance",
+      "status": "active",
+      "sum_insured": 1000000,
+      "coverage": "Death benefit, TPD rider, Critical illness rider"
+    },
+    {
+      "policy_id": "POL_002_GE_SUPREMEHEALTH",
+      "filename": "GREAT_SupremeHealth_Benefits.pdf",
+      "insurer": "Great Eastern",
+      "product_name": "GREAT SupremeHealth",
+      "policy_type": "health_insurance",
+      "tier": "P PLUS",
+      "status": "active",
+      "annual_limit": 1500000,
+      "coverage": "Hospitalization, medical treatment, outpatient care"
+    },
+    {
+      "policy_id": "POL_003_GE_TRAVELCARE",
+      "filename": "GREAT_TravelCare.pdf",
+      "insurer": "Great Eastern",
+      "product_name": "GREAT TravelCare",
+      "policy_type": "travel_insurance",
+      "tier": "Platinum",
+      "status": "active",
+      "emergency_medical_evacuation": 1000000,
+      "coverage": "Travel medical expenses, emergency evacuation, accidental death"
+    }
+  ]
+}

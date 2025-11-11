@@ -99,6 +99,171 @@ class QueryProcessor:
             self.current_batch_id = None
             return False
 
+    # =========================================================================
+    # == NEW FUNCTIONS FOR RAGAS EVALUATION: Testable Retrieval & Generation ==
+    # =========================================================================
+
+    def run_retrieval(self, query: str, batch_id: str, user_profile: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Runs the full retrieval pipeline (intent, expansion, RAG, and web research).
+        Returns a dictionary containing all retrieved contexts.
+        
+        This is a NON-STREAMING, testable method designed for RAGAS evaluation.
+        It separates the retrieval phase from generation, enabling metric calculation.
+        """
+        print(f"--- [EVAL] Running Retrieval for Query: {query} ---")
+        
+        # Ensure batch is loaded
+        if not self._ensure_batch_loaded(batch_id):
+            raise Exception(f"Could not load batch '{batch_id}'")
+        
+        # 1. Analyze Intent
+        try:
+            intent_response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": self._get_intent_prompt(query)}],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+            intent = json.loads(intent_response.choices[0].message.content)
+        except Exception as e:
+            print(f"Error analyzing intent: {e}")
+            intent = {
+                "needs_comparison": False,
+                "asks_about_uncovered_features": False,
+                "requires_external_info": False
+            }
+
+        # 2. Expand and Search Documents (RAG)
+        expanded_query = self._expand_query(query)
+        raw_search_results = self.search_engine.hybrid_search(
+            query=expanded_query, top_k=50  # Retrieve a large candidate set
+        )
+        unique_results = self._deduplicate_results(raw_search_results)
+        
+        # 3. Determine if Web Research is Needed
+        needs_research = (
+            intent["needs_comparison"] or
+            intent["asks_about_uncovered_features"] or
+            intent["requires_external_info"] or
+            len(unique_results) == 0
+        )
+
+        # 4. Run Web Research if Needed
+        research_results = {"answer": "", "sources": []}
+        if needs_research:
+            print("--- [EVAL] Triggering DeepResearch (Web Search) ---")
+            try:
+                researcher = DeepResearch()
+                enhanced_query = self._format_enhanced_query(query, unique_results, intent)
+                research_results = researcher.research(enhanced_query)
+            except Exception as e:
+                print(f"Error during deep research: {e}")
+                research_results = {"answer": "", "sources": []}
+        
+        # 5. Collate all contexts for RAGAS
+        rag_contexts = [chunk.get("content", "") for chunk in unique_results]
+        web_contexts = [research_results["answer"]] if research_results.get("answer") else []
+
+        return {
+            "rag_chunks_details": unique_results,    # For generation (with metadata)
+            "rag_contexts_list": rag_contexts,        # For RAGAS metrics
+            "web_contexts_list": web_contexts,        # For RAGAS metrics
+            "web_research_raw": research_results,     # For generation
+            "intent": intent,                          # For diagnostics
+        }
+
+    def run_generation(self, query: str, rag_chunks: List[Dict], research_results: Dict, user_profile: Optional[Dict] = None) -> str:
+        """
+        Runs the generation step given a query and retrieved contexts.
+        Returns a single, complete answer string.
+        
+        This is a NON-STREAMING version designed for RAGAS evaluation.
+        It accepts already-retrieved contexts instead of doing retrieval internally.
+        """
+        print(f"--- [EVAL] Running Generation for Query: {query} ---")
+        
+        # 1. Format Document Context
+        context_from_docs = self._format_rag_context_for_prompt(rag_chunks)
+
+        # 2. Format Profile Context
+        profile_info, salutation = self._format_profile_for_prompt(user_profile)
+
+        # 3. Combine Web Research into the prompt
+        research_context = ""
+        if research_results and research_results.get("answer"):
+            research_context = f"\n--- EXTERNAL WEB RESEARCH ---\n{research_results['answer']}\n--- END OF WEB RESEARCH ---"
+
+        # 4. Create the Final Prompt
+        prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
+Your task is to answer the user's question using the provided documents AND external research if available.
+
+User Question: {query}
+{profile_info}
+
+--- POLICY DOCUMENT CHUNKS ---
+{context_from_docs if context_from_docs else "No relevant information found in policy documents."}
+--- END OF DOCUMENTS ---
+{research_context}
+
+CRITICAL RESPONSE RULES:
+1. Base your answer on BOTH document chunks and external research.
+2. Prioritize document information if available.
+3. Use the user's specific policy tier (e.g., "P PLUS") when citing benefits.
+4. Cite document facts with [Source X: filename.pdf, Page Y].
+5. If using web research, state that (e.g., "External research shows...").
+6. Keep response concise and focused on the user's specific question."""
+
+        # 5. Call OpenAI API (non-streaming)
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are an expert financial advisor specializing in insurance policy analysis and benefits explanation."},
+                    {"role": "user", "content": prompt_instructions},
+                ],
+                max_tokens=1500,
+                temperature=0.0,
+            )
+            final_answer = response.choices[0].message.content.strip()
+            return final_answer
+        except Exception as e:
+            print(f"Error during generation: {e}")
+            return f"Error generating response: {e}"
+
+    def _format_rag_context_for_prompt(self, rag_chunks: List[Dict]) -> str:
+        """Formats RAG chunks into a prompt-friendly string with citations."""
+        context_parts = []
+        max_chunks = 30  # Your original limit
+        for i, result in enumerate(rag_chunks[:max_chunks], 1):
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
+            if content:
+                filename = metadata.get("filename", "Unknown")
+                page = metadata.get("page_number", "N/A")
+                source_ref = f"[Source {i}: {filename}, Page {page}]"
+                context_parts.append(f"{source_ref}\n{content}")
+        return "\n\n---\n\n".join(context_parts)
+
+    def _format_profile_for_prompt(self, user_profile: Optional[Dict]) -> tuple:
+        """Formats user profile into prompt-friendly string and salutation."""
+        if user_profile:
+            user_name = user_profile.get("name", "User")
+            policy_tiers = user_profile.get("policy_tiers", {})
+            profile_info = f"\n\nUSER PROFILE:\n- User Name: {user_name}"
+            if policy_tiers:
+                profile_info += "\n- Policy Tiers:"
+                for policy, tier in policy_tiers.items():
+                    profile_info += f"\n  - {policy}: {tier} plan"
+        else:
+            user_name = "User"
+            profile_info = ""
+        
+        salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'there'},"
+        return profile_info, salutation
+
+    # =========================================================================
+
     def _deduplicate_results(self, results: List[Dict]) -> List[Dict]:
         """Remove duplicate results based on content."""
         unique_results = []

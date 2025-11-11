@@ -1,0 +1,37 @@
+[
+  {
+    "question_id": "TEST_001_BASELINE_RAG",
+    "question": "What is the annual benefit limit for GREAT SupremeHealth?",
+    "ground_truth": "The annual benefit limit for the GREAT SupremeHealth P PLUS plan is S$1,500,000.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Baseline RAG retrieval - tests if the pipeline can find and extract basic information from documents"
+  },
+  {
+    "question_id": "TEST_002_PERSONALIZATION",
+    "question": "What is my co-insurance for the GREAT SupremeHealth plan?",
+    "ground_truth": "Your co-insurance for your GREAT SupremeHealth (P PLUS plan) is 10% of the claim, after the deductible is met.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Personalization - tests if the pipeline correctly uses user profile (policy_tiers) to provide tier-specific information"
+  },
+  {
+    "question_id": "TEST_003_WEB_FALLBACK",
+    "question": "What are the market alternatives to the Manulife ManuProtect Term (II)?",
+    "ground_truth": "While your documents do not list alternatives, external web research shows popular alternatives for term life insurance in Singapore include policies from insurers like Singlife, AIA, and NTUC Income, which offer similar death and TPD benefits.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Web research fallback - tests if the pipeline correctly triggers web search when documents don't contain the answer"
+  },
+  {
+    "question_id": "TEST_004_CHUNKING_FLAW",
+    "question": "What is the benefit for 'Post Hospitalisation Treatment' for the 'P PLUS' plan?",
+    "ground_truth": "The benefit for Post Hospitalisation Treatment for the P PLUS plan is 'As Charged', covered for 180 days after discharge.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Chunking flaw detection - targets a specific row in the GREAT SupremeHealth benefits table; low context_recall here proves naive chunking breaks table context"
+  },
+  {
+    "question_id": "TEST_005_COMPARISON",
+    "question": "Compare the medical evacuation coverage in my GREAT TravelCare and my GREAT SupremeHealth policies.",
+    "ground_truth": "Your GREAT TravelCare policy (Platinum tier) provides S$1,000,000 for Emergency Medical Evacuation. Your GREAT SupremeHealth (P PLUS plan) covers 'Emergency Treatment Overseas' as charged.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Comparison question - tests if the pipeline correctly retrieves information from multiple documents and performs comparison; also measures unnecessary web search triggering"
+  }
+]
