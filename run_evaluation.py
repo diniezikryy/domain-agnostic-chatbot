@@ -264,7 +264,7 @@ Question: {query}"""
     
     # 2. Run retrieval using the hypothetical answer as query
     # This leverages semantic search to find documents that match the hypothetical response
-    retrieval_data = query_processor.run_retrieval(hyde_answer, batch_id, user_profile)
+    retrieval_data = query_processor.run_retrieval(hyde_answer, batch_id, user_profile, skip_expansion=True)
     
     return retrieval_data
 
@@ -578,7 +578,7 @@ def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: st
         timeout=120,     # seconds for a single operation (keep current value)
         max_retries=3,   # retry attempts on transient failures
         max_wait=60,     # maximum backoff wait between retries
-        max_workers=2,   # REDUCED: limit concurrent workers to 2 to lower parallel LLM load
+        max_workers=1,   # REDUCED: force sequential execution to avoid rate limits and ensure stability
     )
     
     for attempt in range(1, attempts + 1):
@@ -592,7 +592,8 @@ def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: st
                 dataset, 
                 metrics=metrics, 
                 llm=llm,
-                run_config=run_config  # Pass RunConfig to control timeout and concurrency
+                run_config=run_config,  # Pass RunConfig to control timeout and concurrency
+                raise_exceptions=False  # Critical: prevents 1 bad question from crashing the whole script
             )
 
             # Basic validation: must be convertible to pandas and contain required columns

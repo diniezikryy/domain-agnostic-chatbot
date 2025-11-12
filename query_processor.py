@@ -103,7 +103,7 @@ class QueryProcessor:
     # == NEW FUNCTIONS FOR RAGAS EVALUATION: Testable Retrieval & Generation ==
     # =========================================================================
 
-    def run_retrieval(self, query: str, batch_id: str, user_profile: Optional[Dict] = None) -> Dict[str, Any]:
+    def run_retrieval(self, query: str, batch_id: str, user_profile: Optional[Dict] = None, skip_expansion: bool = False) -> Dict[str, Any]:
         """
         Runs the full retrieval pipeline (intent, expansion, RAG, and web research).
         Returns a dictionary containing all retrieved contexts.
@@ -135,7 +135,11 @@ class QueryProcessor:
             }
 
         # 2. Expand and Search Documents (RAG)
-        expanded_query = self._expand_query(query)
+        if skip_expansion:
+            print("Skipping query expansion (using raw input)...")
+            expanded_query = query
+        else:
+            expanded_query = self._expand_query(query)
         raw_search_results = self.search_engine.hybrid_search(
             query=expanded_query, top_k=50  # Retrieve a large candidate set
         )
