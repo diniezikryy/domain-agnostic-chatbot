@@ -58,7 +58,7 @@ class FileHandler:
                 page_content = page_info["text"]
 
                 # Create chunks for this page's content with specified strategy
-                chunks = self._create_chunks(page_content, strategy=chunking_strategy)
+                chunks, actual_strategy = self._create_chunks(page_content, strategy=chunking_strategy)
 
                 for i, chunk in enumerate(chunks):
                     all_chunks.append(chunk)
@@ -72,6 +72,7 @@ class FileHandler:
                             "chunk_size": len(chunk),
                             "file_type": file_path.suffix.lower(),
                             "chunking_strategy": chunking_strategy,
+                            "chunking_strategy_used": actual_strategy,
                         }
                     )
 
@@ -205,7 +206,7 @@ class FileHandler:
                 return year
         return None
 
-    def _create_chunks(self, text: str, strategy: str = "fixed") -> List[str]:
+    def _create_chunks(self, text: str, strategy: str = "fixed") -> Tuple[List[str], str]:
         """Split text into chunks with overlap.
         
         Args:
@@ -213,11 +214,12 @@ class FileHandler:
             strategy: "fixed" (default) or "semantic" (header-aware / table-preserving)
         """
         if strategy == "semantic":
-            return self._create_semantic_chunks(text)
+            chunks, actual_strategy = self._create_semantic_chunks(text)
+            return chunks, actual_strategy
         
         # Fixed-size chunking (original behavior)
         if len(text) <= self.chunk_size:
-            return [text]
+            return [text], "fixed"
 
         chunks = []
         start = 0
@@ -235,9 +237,9 @@ class FileHandler:
                 chunks.append(text[start:])
                 break
 
-        return [c.strip() for c in chunks if c.strip()]
+        return [c.strip() for c in chunks if c.strip()], "fixed"
 
-    def _create_semantic_chunks(self, text: str) -> List[str]:
+    def _create_semantic_chunks(self, text: str) -> Tuple[List[str], str]:
         """Create semantic chunks by preserving headers and table boundaries.
         
         This is a simple header-based chunker that:
@@ -255,6 +257,7 @@ class FileHandler:
 
         if not has_headers and not has_tables:
             # No semantic structure found — fall back to fixed chunking
+            print(f"  [WARN] No semantic structure detected in text (len={len(text)}). Falling back to FIXED chunking.")
             return self._create_chunks(text, strategy="fixed")
 
         chunks = []
@@ -312,7 +315,7 @@ class FileHandler:
                 chunks.append(current_chunk.strip())
         
         # Filter out empty chunks
-        return [c for c in chunks if len(c.strip()) > MIN_CHUNK_CHARS]
+        return [c for c in chunks if len(c.strip()) > MIN_CHUNK_CHARS], "semantic"
 
     def _force_split_large_chunk(self, text: str, max_size: int) -> List[str]:
         """Force split a chunk that exceeds max_size by breaking on newlines."""

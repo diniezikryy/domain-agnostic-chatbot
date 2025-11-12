@@ -44,6 +44,10 @@ MAX_CONTEXTS_FOR_RAGAS = 8
 # Reranker configuration: default number of top-ranked chunks to keep
 RERANK_KEEP_TOP_N = int(os.getenv("RERANK_KEEP_TOP_N", "5"))
 
+# Number of top retrieval chunks to keep when generating answers (prevents confounding
+# improvements due to different candidate set sizes between baseline and re-ranking)
+GENERATION_TOP_K = 5
+
 
 # Simple manager to encapsulate FlashRank initialization and calls.
 # This replaces the previous pattern of attaching the reranker to the function
@@ -124,7 +128,18 @@ def run_retrieval_baseline(
     user_profile: Optional[Dict]
 ) -> Dict[str, Any]:
     """Runs the default retrieval pipeline."""
-    return query_processor.run_retrieval(query, batch_id, user_profile)
+    retrieval_data = query_processor.run_retrieval(query, batch_id, user_profile)
+
+    # Keep only the top-K retrieved chunks for generation to avoid a confounding
+    # variable where the baseline uses many more candidates than the reranker.
+    try:
+        retrieval_data["rag_chunks_details"] = retrieval_data.get("rag_chunks_details", [])[:GENERATION_TOP_K]
+        retrieval_data["rag_contexts_list"] = retrieval_data.get("rag_contexts_list", [])[:GENERATION_TOP_K]
+    except Exception:
+        # Be robust to unexpected retrieval_data shapes
+        pass
+
+    return retrieval_data
 
 
 def run_generation_baseline(
@@ -204,8 +219,9 @@ def run_retrieval_rerank(
         chunk['rerank_score'] = info.get('rerank_score')
         chunk['rerank_rank'] = info.get('rerank_rank')
 
-    # Decide how many top-ranked chunks to keep (configurable)
-    keep_n = RERANK_KEEP_TOP_N if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0 else 5
+    # Decide how many top-ranked chunks to keep (use GENERATION_TOP_K to ensure
+    # the baseline and reranking experiments operate over the same candidate set size)
+    keep_n = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else 5
 
     # Build set of top ids to keep
     top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
@@ -546,8 +562,8 @@ def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: st
     metrics = [
         faithfulness,
         answer_relevancy,
-        # context_precision,  # Disabled due to rate limits
-        # context_recall,     # Disabled due to rate limits
+        context_precision,
+        context_recall,
         answer_correctness,
     ]
 
@@ -556,18 +572,22 @@ def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: st
     attempts = 3
     last_exception = None
     
-    # Configure RAGAS RunConfig with increased timeout and reduced concurrency to avoid rate limits
+    # Configure RAGAS RunConfig: reduce parallelism (max_workers) to avoid hitting rate limits
+    # and keep reasonable timeouts/retries. Setting max_workers low reduces concurrent LLM calls.
     run_config = RunConfig(
-        timeout=120,     # Increased from default (60s) to handle slow API responses
-        max_retries=3,   # Reduced retries to avoid excessive API calls
-        max_wait=60      # Maximum wait time between retries
+        timeout=120,     # seconds for a single operation (keep current value)
+        max_retries=3,   # retry attempts on transient failures
+        max_wait=60,     # maximum backoff wait between retries
+        max_workers=2,   # REDUCED: limit concurrent workers to 2 to lower parallel LLM load
     )
     
     for attempt in range(1, attempts + 1):
         try:
             print(f"RAGAS evaluate() attempt {attempt}/{attempts}...")
-            # Use a more reliable model for RAGAS evaluation
-            llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
+            # Use a more cost- and rate-friendly model for RAGAS evaluation to avoid TPM limits
+            # Switched to gpt-4o-mini to reduce token-per-minute usage during large evaluations
+            # and explicitly request a single generation (n=1) to avoid multiple-completion requests
+            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, n=1)
             evaluation_result = evaluate(
                 dataset, 
                 metrics=metrics, 
@@ -635,6 +655,16 @@ def save_results(
     # Ensure output directory exists
     Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
     
+    # Extract RAGAS metrics properly from the Result object
+    ragas_metrics = {}
+    if hasattr(evaluation_result, 'to_pandas'):
+        df = evaluation_result.to_pandas()
+        # Convert DataFrame to dictionary with metrics as keys and lists of values
+        ragas_metrics = {col: df[col].tolist() for col in df.columns if col in ['faithfulness', 'answer_relevancy', 'answer_correctness', 'context_precision', 'context_recall']}
+        # Also include summary statistics
+        ragas_metrics['summary'] = {col: {'mean': df[col].mean(), 'std': df[col].std(), 'min': df[col].min(), 'max': df[col].max()} 
+                                   for col in ragas_metrics.keys() if col != 'summary'}
+    
     # Prepare output data
     output_data = {
         "metadata": {
@@ -643,8 +673,8 @@ def save_results(
             "timestamp": timestamp,
             "num_questions": len(pipeline_results),
         },
-    "ragas_metrics": evaluation_result.to_dict() if hasattr(evaluation_result, 'to_dict') else {},
-    "local_metrics": local_metrics or [],
+        "ragas_metrics": ragas_metrics,
+        "local_metrics": local_metrics or [],
         "pipeline_results": pipeline_results,
     }
     
