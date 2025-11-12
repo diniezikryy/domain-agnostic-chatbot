@@ -18,9 +18,24 @@ if not os.getenv("OPENAI_KEY") and not os.getenv("TAVILY_API_KEY"):
     except ImportError:
         print("Warning: python-dotenv not installed. Environment variables may not be loaded from .env")
 
-from tavily import TavilyClient
-# Initialize Tavily client 
-tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+# Initialize Tavily client - optional, will be None if API key not available or module not installed
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+tavily = None
+
+if TAVILY_API_KEY:
+    try:
+        from tavily import TavilyClient
+        tavily = TavilyClient(api_key=TAVILY_API_KEY)
+    except ImportError:
+        print("Warning: tavily package not installed. Web research disabled. Install with: pip install tavily-python")
+        tavily = None
+    except Exception as e:
+        print(f"Warning: Could not initialize Tavily client: {e}")
+        tavily = None
+else:
+    print("Info: TAVILY_API_KEY not set. Web research disabled.")
+    tavily = None
+
 # Concurrency limit (keep for asyncio)
 CONCURRENCY_LIMIT = int(os.getenv("TAVILY_CONCURRENCY", "2"))
 
@@ -248,7 +263,13 @@ async def perform_research(
                 if wants_recent:
                     search_kwargs["time_range"] = "year"
                 
-                result = tavily.search(**search_kwargs)
+                # Skip search if Tavily not available
+                if not tavily:
+                    log("Skipping web search - Tavily API key not available")
+                    result = {"results": []}
+                else:
+                    result = tavily.search(**search_kwargs)
+                
                 new_urls = []
                 scraped_contents = []
 

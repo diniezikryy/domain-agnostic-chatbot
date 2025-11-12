@@ -322,4 +322,7 @@ Icon?
 node_modules/
 
 # Personal Info
+
+# Evaluation results (ignore generated evaluation artifacts)
+evaluation/results/
 user_profile.json

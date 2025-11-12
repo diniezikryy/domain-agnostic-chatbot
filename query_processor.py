@@ -149,9 +149,11 @@ class QueryProcessor:
             len(unique_results) == 0
         )
 
-        # 4. Run Web Research if Needed
+        # 4. Run Web Research if Needed (but only if TAVILY_API_KEY is available)
         research_results = {"answer": "", "sources": []}
-        if needs_research:
+        tavily_available = os.getenv("TAVILY_API_KEY") is not None
+        
+        if needs_research and tavily_available:
             print("--- [EVAL] Triggering DeepResearch (Web Search) ---")
             try:
                 researcher = DeepResearch()
@@ -160,6 +162,8 @@ class QueryProcessor:
             except Exception as e:
                 print(f"Error during deep research: {e}")
                 research_results = {"answer": "", "sources": []}
+        elif needs_research and not tavily_available:
+            print("--- [EVAL] Web research needed but TAVILY_API_KEY not available, skipping ---")
         
         # 5. Collate all contexts for RAGAS
         rag_contexts = [chunk.get("content", "") for chunk in unique_results]

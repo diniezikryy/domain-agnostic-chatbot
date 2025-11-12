@@ -45,7 +45,7 @@ TEST_PROFILES_DIR = "test_data"
 
 # IMPORTANT: Update this to match your test user's batch_id
 # First, register a user in the UI, upload the 3 PDFs, then find the batch_id in batches/
-DEFAULT_TEST_BATCH_ID = "my_policies"
+DEFAULT_TEST_BATCH_ID = "my_policies"  # Actual batch ID
 
 
 # =========================================================================
@@ -207,7 +207,7 @@ def run_pipeline(
         raise Exception(f"FATAL: Could not load batch '{test_batch_id}'. "
                        f"Please ensure the batch exists in batches/{test_batch_id}/")
     
-    print(f"✓ Successfully loaded test batch '{test_batch_id}'.\n")
+    print(f"[OK] Successfully loaded test batch '{test_batch_id}'.\n")
     
     # Select the functions to run based on the experiment
     if experiment_name == "baseline":
@@ -249,9 +249,9 @@ def run_pipeline(
                 all_contexts = []
             
             if not all_contexts:
-                print("⚠ Warning: No context was retrieved.")
+                print("[Warning] No context was retrieved.")
             else:
-                print(f"✓ Retrieved {len(all_contexts)} context chunks.")
+                print(f"[OK] Retrieved {len(all_contexts)} context chunks.")
             
             # 2. Run Generation
             generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
@@ -267,7 +267,7 @@ def run_pipeline(
             })
         
         except Exception as e:
-            print(f"✗ Error processing question: {e}")
+            print(f"[Error] Error processing question: {e}")
             import traceback
             traceback.print_exc()
             # Continue to next question
@@ -350,7 +350,7 @@ def save_results(
     with open(output_filename, 'w') as f:
         json.dump(output_data, f, indent=2)
     
-    print(f"\n✓ Results saved to: {output_filename}")
+    print(f"\n[OK] Results saved to: {output_filename}")
     return output_filename
 
 
@@ -420,7 +420,7 @@ Examples:
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY must be set in .env file")
     
-    print(f"\n🚀 RAGAS Evaluation Harness")
+    print(f"\n[RAGAS] Evaluation Harness")
     print(f"Experiment: {args.experiment.upper()}")
     print(f"Batch ID: {args.batch_id}")
     
@@ -437,7 +437,7 @@ Examples:
     print_metrics_summary(evaluation_result, args.experiment)
     output_file = save_results(evaluation_result, pipeline_results, args.experiment, args.batch_id)
     
-    print(f"\n✓ Evaluation complete!")
+    print(f"\n[OK] Evaluation complete!")
     print(f"Output: {output_file}")
 
 

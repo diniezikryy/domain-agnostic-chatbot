@@ -1,5 +1,27 @@
 {
   "batches": {
+    "my_policies": {
+      "id": "my_policies",
+      "name": "My Policies",
+      "description": "Document batch created from documents/my_policies",
+      "doc_count": 3,
+      "chunk_count": 372,
+      "created_at": "2025-11-10T21:36:40.802709",
+      "faiss_path": "batches/my_policies/faiss_index",
+      "bm25_path": "batches/my_policies/bm25_index.pkl",
+      "metadata_path": "batches/my_policies/metadata.json"
+    },
+    "my_policies_large": {
+      "id": "my_policies_large",
+      "name": "My Policies (Large)",
+      "description": "Document batch with large embedding model",
+      "doc_count": 3,
+      "chunk_count": 372,
+      "created_at": "2025-11-06T23:47:35.275782",
+      "faiss_path": "batches/my_policies_large/faiss_index",
+      "bm25_path": "batches/my_policies_large/bm25_index.pkl",
+      "metadata_path": "batches/my_policies_large/metadata.json"
+    },
     "user_1": {
       "id": "user_1",
       "name": "alice's Policies",
@@ -23,6 +45,6 @@
       "metadata_path": "batches/user_3/metadata.json"
     }
   },
-  "default_batch": null,
-  "last_modified": "2025-11-11T00:47:35.275782"
+  "default_batch": "my_policies",
+  "last_modified": "2025-11-11T21:15:00.000000"
 }
