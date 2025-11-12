@@ -19,15 +19,32 @@ from batch_manager import BatchManager
 class DocumentProcessor:
     def __init__(self):
         self.file_handler = FileHandler()
-        self.embedding_generator = EmbeddingGenerator()
         self.index_builder = SearchIndexBuilder()
         self.batch_manager = BatchManager()
 
     def create_batch(self, batch_id: str, document_paths: List[str],
-                    batch_name: str = None, description: str = "") -> bool:
-        """Create a new document batch with FAISS and BM25 indexes."""
+                    batch_name: str = None, description: str = "",
+                    embedding_model_name: str = "text-embedding-3-small",
+                    embedding_dimension: int = 1536,
+                    chunking_strategy: str = "semantic") -> bool:
+        """Create a new document batch with FAISS and BM25 indexes.
+        
+        Args:
+            batch_id: Unique identifier for the batch
+            document_paths: List of paths to documents to process
+            batch_name: Human-readable name for the batch
+            description: Description of the batch
+            embedding_model_name: OpenAI embedding model name
+            embedding_dimension: Dimension of embeddings
+            chunking_strategy: "semantic" (default, header-aware) or "fixed"
+        """
         try:
             print(f"Processing {len(document_paths)} documents...")
+            print(f"Using Embedding Model: {embedding_model_name} (Dim: {embedding_dimension})")
+            print(f"Chunking Strategy: {chunking_strategy}")
+
+            # INSTANTIATE the generator specifically for this batch
+            batch_embedding_generator = EmbeddingGenerator(model_name=embedding_model_name)
 
             # Process all documents into chunks
             all_chunks_raw = []
@@ -37,8 +54,8 @@ class DocumentProcessor:
             for i, doc_path in enumerate(document_paths):
                 print(f"Processing {Path(doc_path).name} ({i+1}/{len(document_paths)})...")
 
-                # Extract text and create chunks
-                chunks, metadata = self.file_handler.process_document(doc_path)
+                # Extract text and create chunks with specified strategy
+                chunks, metadata = self.file_handler.process_document(doc_path, chunking_strategy=chunking_strategy)
 
                 if chunks:
                     all_chunks_raw.extend(chunks)
@@ -77,9 +94,11 @@ class DocumentProcessor:
             # Build FAISS index
             print("Building FAISS index...")
             faiss_success = self.index_builder.build_faiss_index(
-                chunks=all_chunks_clean, # Use the clean list
-                metadata=all_metadata_clean, # Use the clean list
-                output_dir=str(batch_dir / "faiss_index")
+                chunks=all_chunks_clean,
+                metadata=all_metadata_clean,
+                output_dir=str(batch_dir / "faiss_index"),
+                embedding_generator=batch_embedding_generator,
+                embedding_dimension=embedding_dimension
             )
 
             if not faiss_success:

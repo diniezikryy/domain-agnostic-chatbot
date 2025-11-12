@@ -17,8 +17,8 @@ jiter==0.11.1
 lxml==6.0.2
 mypy_extensions==1.1.0
 numpy==2.3.4
-openai==2.6.1
-packaging==25.0
+openai>=1.58.1,<2.0.0
+packaging>=23.2,<25
 pathspec==0.12.1
 platformdirs==4.5.0
 pydantic==2.12.3
@@ -40,3 +40,5 @@ tavily==1.1.0
 ragas==0.3.8
 datasets==4.4.1
 flashrank==0.2.10
+langchain-openai==0.2.14
+langchain-core==0.3.28

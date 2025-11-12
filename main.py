@@ -523,9 +523,14 @@ def query_endpoint():
         if not batch_manager.switch_batch(batch_id):
             return jsonify({"error": f"Failed to switch to user batch '{batch_id}'"}), 400
 
-        # 5. Process the query
+        # 5. Process the query using refactored methods
         print(f"Processing query for batch: {batch_id}")
-        resp = query_processor.process_query(q, batch_id=batch_id)
+        
+        # Run retrieval to get contexts
+        retrieval_data = query_processor.run_retrieval(q, batch_id=batch_id, user_profile=None)
+        
+        # Run generation to get final answer
+        resp = query_processor.run_generation(q, retrieval_data["rag_chunks_details"], retrieval_data["web_research_raw"], user_profile=None)
 
         # Save the bot's response to the database
         bot_message = Message(user_id=user_id_int, role="bot", content=resp)
@@ -609,7 +614,7 @@ def query_stream_endpoint():
         def generate():
             full_response = []
             try:
-                for chunk in query_processor.process_query_stream(q, batch_id=batch_id, user_profile=user_profile):
+                for chunk in query_processor.process_query_stream_refactored(q, batch_id=batch_id, user_profile=user_profile):
                     yield chunk
                     # Accumulate response content for database storage
                     try:
@@ -894,7 +899,7 @@ def query_for_customer(customer_id):
         def generate():
             full_response = []
             try:
-                for chunk in query_processor.process_query_stream(q, batch_id=batch_id, user_profile=user_profile):
+                for chunk in query_processor.process_query_stream_refactored(q, batch_id=batch_id, user_profile=user_profile):
                     yield chunk
                     # Accumulate response content for database storage
                     try:

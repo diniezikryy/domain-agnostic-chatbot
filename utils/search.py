@@ -16,21 +16,25 @@ class SearchIndexBuilder:
     """Builds FAISS and BM25 search indexes."""
 
     def __init__(self):
-        self.embedding_generator = None
+        pass
 
     def build_faiss_index(
-        self, chunks: List[str], metadata: List[Dict], output_dir: str
+        self, 
+        chunks: List[str], 
+        metadata: List[Dict], 
+        output_dir: str,
+        embedding_generator: 'EmbeddingGenerator',
+        embedding_dimension: int
     ) -> bool:
         """Build FAISS index from text chunks."""
         try:
             import faiss
-            from utils.embeddings import EmbeddingGenerator
 
-            if not self.embedding_generator:
-                self.embedding_generator = EmbeddingGenerator()
+            if not embedding_generator:
+                raise ValueError("Embedding generator must be provided")
 
             print("Generating embeddings for FAISS index...")
-            embeddings = self.embedding_generator.generate_embeddings(chunks)
+            embeddings = embedding_generator.generate_embeddings(chunks)
 
             if not embeddings:
                 print("Failed to generate embeddings")
@@ -39,9 +43,8 @@ class SearchIndexBuilder:
             # Convert to numpy array
             embedding_matrix = np.array(embeddings).astype("float32")
 
-            # Create FAISS index
-            dimension = embedding_matrix.shape[1]
-            index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
+            # Create FAISS index using the dynamic dimension
+            index = faiss.IndexFlatIP(embedding_dimension)
 
             # Normalize embeddings for cosine similarity
             faiss.normalize_L2(embedding_matrix)

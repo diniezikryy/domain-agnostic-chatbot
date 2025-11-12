@@ -326,3 +326,200 @@ node_modules/
 # Evaluation results (ignore generated evaluation artifacts)
 evaluation/results/
 user_profile.json
+
+# FlashRank cache
+.flashrank_cache/
+
+# Additional Python cache patterns
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+ENV/
+
+# IDE and editor files
+.vscode/settings.json
+.vscode/launch.json
+.idea/workspace.xml
+.idea/misc.xml
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary and backup files
+*~
+*.tmp
+*.temp
+*.swp
+*.swo
+*#
+auto-save-list
+\#*\#
+/\#*\#
+
+# Log files
+logs/
+*.log
+log.txt
+
+# Coverage reports
+.coverage
+coverage.xml
+htmlcov/
+
+# Test artifacts
+.pytest_cache/
+.tox/
+.cache/
+
+# Distribution and packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Node.js (for React UI)
+react-ui/node_modules/
+react-ui/.env.local
+react-ui/.env.development.local
+react-ui/.env.test.local
+react-ui/.env.production.local
+
+# API keys and secrets
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+secrets/
+*.key
+*.pem
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Large data files
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Model and embedding files
+*.bin
+*.safetensors
+*.pt
+*.pth
+embeddings/
+models/
+
+# Cache directories
+__pycache__/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.dmypy_cache/
+
+# Jupyter notebooks (if any)
+.ipynb_checkpoints/
+
+# Documentation build
+docs/_build/
+site/
+
+# Backup files
+*_backup
+*_old
+*.orig
+*.rej
+
+# Profiling and debugging
+*.prof
+*.lprof
+debug.log
+debug.txt
+
+# Local development files
+.local
+development/
+local/
+
+# Docker (if used)
+.dockerignore
+
+# CI/CD
+.github/workflows/*.log
+.github/actions/*/dist/
+
+# Pre-commit hooks
+.pre-commit-config.yaml.backup
+
+# Ruff (Python linter/formatter)
+.ruff_cache/
+
+# Poetry (if used)
+poetry.lock
+
+# Pip
+requirements-dev.txt
+requirements-local.txt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# PyTorch Lightning
+lightning_logs/
+checkpoints/
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Weights & Biases
+wandb/
+
+# TensorBoard
+runs/
+logs/
+
+# DVC (Data Version Control)
+.dvc/
+
+# Airflow
+airflow.cfg
+airflow.db
+
+# Kubernetes
+*.yaml.backup
+*.yml.backup
+
+# Temporary scripts and utilities
+*_temp.py
+*_debug.py
+*_test.py
+run_*.ps1
+run_*.sh
+
+# Backup data files
+*_backup.json
+*_old.json
+*full_backup.json
+
+# Development artifacts
+debug_*.py
+temp_*.py
+scratch_*.py
+.github/instructions/RAGAS_Improvement_Plan.instructions.md

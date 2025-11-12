@@ -19,9 +19,14 @@ class FileHandler:
         self.chunk_overlap = chunk_overlap
 
     def process_document(
-        self, file_path: str
+        self, file_path: str, chunking_strategy: str = "fixed"
     ) -> Tuple[List[str], List[Dict[str, Any]]]:
-        """Process a document and return chunks with metadata."""
+        """Process a document and return chunks with metadata.
+        
+        Args:
+            file_path: Path to document file
+            chunking_strategy: "fixed" (default) or "semantic" (header-aware)
+        """
         file_path = Path(file_path)
 
         if not file_path.exists():
@@ -52,8 +57,8 @@ class FileHandler:
                 page_num = page_info["page_num"]
                 page_content = page_info["text"]
 
-                # Create chunks for this page's content
-                chunks = self._create_chunks(page_content)
+                # Create chunks for this page's content with specified strategy
+                chunks = self._create_chunks(page_content, strategy=chunking_strategy)
 
                 for i, chunk in enumerate(chunks):
                     all_chunks.append(chunk)
@@ -66,6 +71,7 @@ class FileHandler:
                             "chunk_id": f"p{page_num}-{i}",
                             "chunk_size": len(chunk),
                             "file_type": file_path.suffix.lower(),
+                            "chunking_strategy": chunking_strategy,
                         }
                     )
 
@@ -199,8 +205,17 @@ class FileHandler:
                 return year
         return None
 
-    def _create_chunks(self, text: str) -> List[str]:
-        """Split text into chunks with overlap."""
+    def _create_chunks(self, text: str, strategy: str = "fixed") -> List[str]:
+        """Split text into chunks with overlap.
+        
+        Args:
+            text: Input text to chunk
+            strategy: "fixed" (default) or "semantic" (header-aware / table-preserving)
+        """
+        if strategy == "semantic":
+            return self._create_semantic_chunks(text)
+        
+        # Fixed-size chunking (original behavior)
         if len(text) <= self.chunk_size:
             return [text]
 
@@ -221,3 +236,96 @@ class FileHandler:
                 break
 
         return [c.strip() for c in chunks if c.strip()]
+
+    def _create_semantic_chunks(self, text: str) -> List[str]:
+        """Create semantic chunks by preserving headers and table boundaries.
+        
+        This is a simple header-based chunker that:
+        - Splits on markdown headers (##, ###, etc.) when present
+        - Preserves table blocks (lines starting with | or containing table delimiters)
+        - Falls back to fixed-size chunking for non-markdown content
+        - Hard limit: Max 6000 chars per chunk (~ 1500 tokens, safe for 8192 token models)
+        """
+        MAX_CHUNK_CHARS = 6000  # ~1500 tokens (safe for OpenAI's 8192 token limit)
+        MIN_CHUNK_CHARS = 50
+        
+        # Check if the text appears to be markdown (contains headers or table markers)
+        has_headers = re.search(r'^#{1,6}\s+', text, re.MULTILINE)
+        has_tables = '|' in text and re.search(r'\|.*\|.*\|', text)
+
+        if not has_headers and not has_tables:
+            # No semantic structure found — fall back to fixed chunking
+            return self._create_chunks(text, strategy="fixed")
+
+        chunks = []
+        
+        # Split by headers (## or ###) while preserving header lines
+        header_pattern = re.compile(r'^(#{1,6}\s+.+)$', re.MULTILINE)
+        sections = re.split(header_pattern, text)
+        
+        # Sections will be: [text_before_first_header, header1, content1, header2, content2, ...]
+        # Combine each header with its content
+        current_chunk = ""
+        for i, section in enumerate(sections):
+            if not section.strip():
+                continue
+            
+            # If section is a header line
+            if header_pattern.match(section):
+                # Start a new chunk with this header
+                if current_chunk.strip() and len(current_chunk) > MIN_CHUNK_CHARS:
+                    # Force-split if over max
+                    if len(current_chunk) > MAX_CHUNK_CHARS:
+                        chunks.extend(self._force_split_large_chunk(current_chunk, MAX_CHUNK_CHARS))
+                    else:
+                        chunks.append(current_chunk.strip())
+                current_chunk = section + "\n"
+            else:
+                # Content section — append to current chunk
+                current_chunk += section
+                
+                # Hard limit enforcement
+                if len(current_chunk) > MAX_CHUNK_CHARS:
+                    # Try to split on paragraph boundaries
+                    paragraphs = current_chunk.split('\n\n')
+                    if len(paragraphs) > 1:
+                        # Take paragraphs until we hit the limit
+                        temp_chunk = ""
+                        for para in paragraphs:
+                            if len(temp_chunk) + len(para) + 2 < MAX_CHUNK_CHARS:
+                                temp_chunk += para + "\n\n"
+                            else:
+                                if temp_chunk.strip():
+                                    chunks.append(temp_chunk.strip())
+                                temp_chunk = para + "\n\n"
+                        current_chunk = temp_chunk
+                    else:
+                        # No paragraph boundaries — force split
+                        chunks.extend(self._force_split_large_chunk(current_chunk, MAX_CHUNK_CHARS))
+                        current_chunk = ""
+        
+        # Add final chunk (with force-split if needed)
+        if current_chunk.strip():
+            if len(current_chunk) > MAX_CHUNK_CHARS:
+                chunks.extend(self._force_split_large_chunk(current_chunk, MAX_CHUNK_CHARS))
+            else:
+                chunks.append(current_chunk.strip())
+        
+        # Filter out empty chunks
+        return [c for c in chunks if len(c.strip()) > MIN_CHUNK_CHARS]
+
+    def _force_split_large_chunk(self, text: str, max_size: int) -> List[str]:
+        """Force split a chunk that exceeds max_size by breaking on newlines."""
+        chunks = []
+        lines = text.split('\n')
+        current = ""
+        for line in lines:
+            if len(current) + len(line) + 1 < max_size:
+                current += line + "\n"
+            else:
+                if current.strip():
+                    chunks.append(current.strip())
+                current = line + "\n"
+        if current.strip():
+            chunks.append(current.strip())
+        return chunks

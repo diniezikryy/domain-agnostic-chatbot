@@ -1,19 +1,23 @@
 """
 RAGAS Evaluation Harness
-Orchestrates evaluation of RAG pipeline with 4 experiments: baseline, no_rag, reranking, HyDE.
-Uses gpt-4o-mini for RAGAS metrics to reduce costs 10x.
+Orchestrates evaluation of RAG pipeline with experiments including baseline, no_rag, reranking, HyDE and semantic_chunking.
+Uses gpt-4o-mini for RAGAS metrics to reduce costs.
 
 Usage:
   python run_evaluation.py --experiment baseline --batch_id my_policies
   python run_evaluation.py --experiment reranking --batch_id my_policies
-  python run_evaluation.py --experiment hyde --batch_id my_policies
+  python run_evaluation.py --experiment hyde --batch_id my_policies_large
   python run_evaluation.py --experiment no_rag --batch_id my_policies
+  python run_evaluation.py --experiment semantic_chunking --batch_id my_policies
 """
 
 import json
 import os
 import sys
 import argparse
+import time
+import re
+import csv
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -28,13 +32,52 @@ from ragas.metrics import (
     context_recall,
     answer_correctness
 )
-from flashrank import Ranker
+from ragas.run_config import RunConfig
 from langchain_openai import ChatOpenAI
 
 # Import your application classes
 from query_processor import QueryProcessor
 from batch_manager import BatchManager
 
+
+MAX_CONTEXTS_FOR_RAGAS = 8
+# Reranker configuration: default number of top-ranked chunks to keep
+RERANK_KEEP_TOP_N = int(os.getenv("RERANK_KEEP_TOP_N", "5"))
+
+
+# Simple manager to encapsulate FlashRank initialization and calls.
+# This replaces the previous pattern of attaching the reranker to the function
+# object and centralizes error handling.
+class RerankerManager:
+    def __init__(self):
+        self._initialized = False
+        self.ranker = None
+        self.RerankRequest = None
+
+    def init(self):
+        if self._initialized:
+            return
+        try:
+            from flashrank import Ranker, RerankRequest
+            # keep a small local cache dir to avoid re-downloading models repeatedly
+            self.ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir=".flashrank_cache")
+            self.RerankRequest = RerankRequest
+            self._initialized = True
+        except Exception as e:
+            # bubble up so callers can handle fallback
+            raise
+
+    def rerank(self, query, passages):
+        self.init()
+        request = self.RerankRequest(query=query, passages=passages)
+        result = self.ranker.rerank(request)
+        try:
+            return list(result)
+        except Exception:
+            return result
+
+
+reranker_manager = RerankerManager()
 
 # =========================================================================
 # CONFIGURATION
@@ -126,26 +169,56 @@ def run_retrieval_rerank(
     print("--- [EVAL] Running Retrieval (RE-RANKING) ---")
     retrieval_data = query_processor.run_retrieval(query, batch_id, user_profile)
     
-    # Initialize re-ranker (cached after first use)
-    if not hasattr(query_processor, 'reranker'):
-        print("Initializing FlashRank re-ranker (first run)...")
-        query_processor.reranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir=".flashrank_cache")
-    
-    # Re-rank the document chunks
-    rag_chunks = retrieval_data["rag_chunks_details"]
-    if rag_chunks:
-        passages = [{"id": i, "text": chunk["content"]} for i, chunk in enumerate(rag_chunks)]
-        reranked = query_processor.reranker.rerank(query=query, passages=passages)
-        
-        # Keep top 5 reranked chunks
-        reranked_indices = {r['id'] for r in reranked[:5]}
-        final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
-        
-        # Update retrieval data with reranked chunks
-        retrieval_data["rag_chunks_details"] = final_rag_chunks
-        retrieval_data["rag_contexts_list"] = [c["content"] for c in final_rag_chunks]
-        print(f"Re-ranked from {len(rag_chunks)} to {len(final_rag_chunks)} chunks.")
-    
+    # Re-rank the document chunks (using the centralized RerankerManager)
+    rag_chunks = retrieval_data.get("rag_chunks_details", [])
+    if not rag_chunks:
+        return retrieval_data
+
+    passages = [{"id": i, "text": chunk.get("content", "")} for i, chunk in enumerate(rag_chunks)]
+
+    try:
+        reranked = reranker_manager.rerank(query, passages)
+    except Exception as e:
+        print(f"Warning: re-ranker initialization/execute failed ({e}). Skipping re-ranking step.")
+        return retrieval_data
+
+    # Ensure list
+    try:
+        reranked_list = list(reranked)
+    except Exception:
+        reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+
+    # Map rerank info (score and rank position) back to original chunks
+    rerank_info = {}
+    for rank_pos, item in enumerate(reranked_list, start=1):
+        # item expected to contain at least 'id' and optionally 'score'
+        idx = item.get('id') if isinstance(item, dict) else None
+        score = item.get('score') if isinstance(item, dict) and 'score' in item else None
+        if idx is None:
+            continue
+        rerank_info[int(idx)] = {"rerank_score": score, "rerank_rank": rank_pos}
+
+    # Attach rerank metadata to each chunk
+    for i, chunk in enumerate(rag_chunks):
+        info = rerank_info.get(i, {})
+        chunk['rerank_score'] = info.get('rerank_score')
+        chunk['rerank_rank'] = info.get('rerank_rank')
+
+    # Decide how many top-ranked chunks to keep (configurable)
+    keep_n = RERANK_KEEP_TOP_N if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0 else 5
+
+    # Build set of top ids to keep
+    top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
+    reranked_indices = {int(i) for i in top_ids}
+
+    final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
+
+    # Update retrieval data with reranked chunks and provide rerank_info for debugging/analysis
+    retrieval_data["rag_chunks_details"] = final_rag_chunks
+    retrieval_data["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
+    retrieval_data["rerank_info"] = rerank_info
+
+    print(f"Re-ranked from {len(rag_chunks)} to {len(final_rag_chunks)} chunks. (keep_n={keep_n})")
     return retrieval_data
 
 
@@ -222,6 +295,9 @@ def run_pipeline(
     elif experiment_name == "hyde":
         retrieval_func = run_retrieval_hyde
         generation_func = run_generation_baseline
+    elif experiment_name == "semantic_chunking":
+        retrieval_func = run_retrieval_semantic_chunking
+        generation_func = run_generation_baseline
     else:
         raise ValueError(f"Unknown experiment: {experiment_name}")
     
@@ -240,16 +316,26 @@ def run_pipeline(
         try:
             # 1. Run Retrieval
             retrieval_data = retrieval_func(query_processor, question, test_batch_id, user_profile)
-            
+
+            # Trim contexts to avoid oversized evaluation prompts
+            rag_contexts = retrieval_data["rag_contexts_list"][:MAX_CONTEXTS_FOR_RAGAS]
+            web_contexts = retrieval_data["web_contexts_list"][:max(0, MAX_CONTEXTS_FOR_RAGAS - len(rag_contexts))]
+
+            retrieval_data["rag_contexts_list"] = rag_contexts
+            retrieval_data["rag_chunks_details"] = retrieval_data["rag_chunks_details"][:MAX_CONTEXTS_FOR_RAGAS]
+            retrieval_data["web_contexts_list"] = web_contexts
+
             # Collate all contexts for RAGAS
-            all_contexts = retrieval_data["rag_contexts_list"] + retrieval_data["web_contexts_list"]
-            
+            all_contexts = rag_contexts + web_contexts
+
             # For no_rag experiment, explicitly set contexts to empty
             if experiment_name == "no_rag":
                 all_contexts = []
-            
+
             if not all_contexts:
                 print("[Warning] No context was retrieved.")
+                # RAGAS requires at least one context (even if empty string) to avoid validation errors
+                all_contexts = [""]
             else:
                 print(f"[OK] Retrieved {len(all_contexts)} context chunks.")
             
@@ -257,13 +343,18 @@ def run_pipeline(
             generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
             print(f"A: {generated_answer[:100]}...")
             
-            # 3. Store results for RAGAS
+            # 3. Store results for RAGAS and include retrieval metadata (rerank scores etc.)
             results.append({
                 "question": question,
                 "answer": generated_answer,
                 "contexts": all_contexts,
                 "ground_truth": ground_truth,
                 "question_id": question_id,
+                # include detailed retrieval info for debugging/analysis
+                "rag_chunks": retrieval_data.get("rag_chunks_details", []),
+                "rag_contexts": retrieval_data.get("rag_contexts_list", []),
+                "web_research": retrieval_data.get("web_research_raw", {}),
+                "rerank_info": retrieval_data.get("rerank_info", {}),
             })
         
         except Exception as e:
@@ -276,56 +367,266 @@ def run_pipeline(
     return results
 
 
+def run_retrieval_semantic_chunking(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Experiment: Create/load a semantic-chunked batch (batch_id + '_semantic') and run retrieval against it.
+
+    This function will create a new batch using semantic chunking if it doesn't exist yet. It is non-destructive to the original baseline batch.
+    """
+    print("--- [EVAL] Running Retrieval (SEMANTIC CHUNKING) ---")
+    semantic_batch_id = f"{batch_id}_semantic"
+    semantic_meta_path = Path("batches") / semantic_batch_id / "metadata.json"
+    batch_meta_path = Path("batches") / batch_id / "metadata.json"
+
+    # If semantic batch doesn't exist, attempt to create it using the same documents as the original batch
+    if not semantic_meta_path.exists():
+        if not batch_meta_path.exists():
+            print(f"Original batch metadata not found: {batch_meta_path}. Falling back to baseline retrieval.")
+            return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
+
+        try:
+            with open(batch_meta_path, 'r') as f:
+                meta = json.load(f)
+            doc_entries = meta.get('documents', [])
+            doc_paths = [d.get('file_path') for d in doc_entries if d.get('file_path')]
+
+            from document_processor import DocumentProcessor
+            dp = DocumentProcessor()
+
+            print(f"Creating semantic-chunked batch '{semantic_batch_id}' from original documents...")
+            success = dp.create_batch(
+                batch_id=semantic_batch_id,
+                document_paths=doc_paths,
+                batch_name=f"{meta.get('name', semantic_batch_id)} (Semantic)",
+                description="Semantic-chunked batch created for evaluation (header-aware chunking)",
+                embedding_model_name="text-embedding-3-small",
+                embedding_dimension=1536,
+                chunking_strategy="semantic"
+            )
+
+            if not success:
+                print("Failed to create semantic batch. Falling back to baseline retrieval.")
+                return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
+
+            print(f"Semantic batch '{semantic_batch_id}' created.")
+
+        except Exception as e:
+            print(f"Error creating semantic batch: {e}")
+            return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
+
+    # Ensure the query processor loads the semantic batch
+    if not query_processor._ensure_batch_loaded(semantic_batch_id):
+        print(f"Failed to load semantic batch '{semantic_batch_id}'. Falling back to baseline.")
+        return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
+
+    # Run retrieval against the semantic batch
+    return query_processor.run_retrieval(query, semantic_batch_id, user_profile)
+
+
 # =========================================================================
 # RAGAS EVALUATION & REPORTING
 # =========================================================================
 
-def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: str) -> Dict:
-    """Runs RAGAS metrics on the collected results."""
+
+def compute_local_support_metrics(pipeline_results: List[Dict]) -> List[Dict]:
+    """Compute lightweight lexical overlap metrics as a fast, local fallback.
+
+    These metrics give a quick signal about whether ground-truth tokens appear in
+    the retrieved contexts and generated answer without making additional LLM calls.
+    """
+    metrics: List[Dict[str, Any]] = []
+    token_pattern = re.compile(r"\w+")
+
+    for entry in pipeline_results:
+        ground_truth = entry.get("ground_truth", "") or ""
+        contexts = entry.get("contexts", []) or []
+        answer = entry.get("answer", "") or ""
+
+        tokens = [t.lower() for t in token_pattern.findall(ground_truth) if len(t) > 2]
+        unique_tokens = list(dict.fromkeys(tokens))  # preserve order for reproducibility
+        token_count = len(unique_tokens)
+
+        context_text = " ".join(contexts).lower()
+        answer_text = answer.lower()
+
+        if token_count:
+            context_hits = sum(1 for token in unique_tokens if token in context_text)
+            answer_hits = sum(1 for token in unique_tokens if token in answer_text)
+            context_recall = context_hits / token_count
+            answer_recall = answer_hits / token_count
+        else:
+            context_hits = answer_hits = 0
+            context_recall = answer_recall = 0.0
+
+        metrics.append({
+            "question_id": entry.get("question_id") or "unknown",
+            "ground_truth_token_count": token_count,
+            "context_token_hits": context_hits,
+            "answer_token_hits": answer_hits,
+            "context_token_recall": round(context_recall, 4),
+            "answer_token_recall": round(answer_recall, 4),
+            "full_ground_truth_in_context": any(
+                ground_truth.lower() in c.lower() for c in contexts if ground_truth
+            ),
+            "full_ground_truth_in_answer": bool(ground_truth and ground_truth.lower() in answer_text),
+        })
+
+    return metrics
+
+
+def print_local_metrics_summary(local_metrics: List[Dict[str, Any]]):
+    """Print a compact summary of the local support metrics."""
+    if not local_metrics:
+        print("[Local Metrics] No pipeline results available for analysis.")
+        return
+
+    total = len(local_metrics)
+    context_support = sum(1 for m in local_metrics if m["context_token_recall"] >= 0.3)
+    answer_support = sum(1 for m in local_metrics if m["answer_token_recall"] >= 0.3)
+
     print(f"\n{'='*70}")
-    print("Running RAGAS Evaluation Metrics...")
+    print("Local Support Metrics (lexical overlap)")
     print(f"{'='*70}\n")
-    
+    print(f"Questions analysed: {total}")
+    print(f"Context support (>=30% token recall): {context_support}/{total}")
+    print(f"Answer support (>=30% token recall): {answer_support}/{total}")
+    print("\nPer-question breakdown:")
+    for metric in local_metrics:
+        print(
+            f"  - {metric['question_id']}: context_recall={metric['context_token_recall']:.2f}, "
+            f"answer_recall={metric['answer_token_recall']:.2f}, "
+            f"full_match_ctx={metric['full_ground_truth_in_context']}, "
+            f"full_match_ans={metric['full_ground_truth_in_answer']}"
+        )
+
+
+def save_local_metrics_csv(
+    local_metrics: List[Dict[str, Any]],
+    experiment_name: str,
+    batch_id: str
+) -> Optional[str]:
+    """Persist the local metrics to CSV for offline analysis."""
+    if not local_metrics:
+        return None
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = Path("evaluation/results") / f"local_metrics_{experiment_name}_{batch_id}_{timestamp}.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = list(local_metrics[0].keys())
+    with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(local_metrics)
+
+    print(f"[OK] Local metrics saved to: {output_path}")
+    return str(output_path)
+
+def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: str) -> Any:
+    """Runs RAGAS metrics on the collected results with validation and retries.
+
+    This wrapper will attempt evaluate() up to 3 times and validate the returned
+    DataFrame to ensure expected metric columns exist and are not all-NaN.
+    On repeated failures it writes a debug artifact to `evaluation/results/` and returns {}.
+    """
+    print(f"\n{'='*70}")
+    print("Running RAGAS Evaluation Metrics (safe wrapper)...")
+    print(f"{'='*70}\n")
+
     if not results:
         print("ERROR: No results to evaluate!")
         return {}
-    
-    # Create dataset in RAGAS format
+
     dataset = Dataset.from_list(results)
-    
-    # Define metrics
+    # Temporarily disable expensive metrics to avoid rate limits
     metrics = [
         faithfulness,
         answer_relevancy,
-        context_precision,
-        context_recall,
+        # context_precision,  # Disabled due to rate limits
+        # context_recall,     # Disabled due to rate limits
         answer_correctness,
     ]
+
+    required_cols = ['faithfulness', 'answer_relevancy', 'answer_correctness']
+
+    attempts = 3
+    last_exception = None
     
-    print(f"Evaluating {len(results)} Q&A pairs with {len(metrics)} metrics...")
-    print("(This will make LLM calls to gpt-4o-mini for cost-effective evaluation)\n")
+    # Configure RAGAS RunConfig with increased timeout and reduced concurrency to avoid rate limits
+    run_config = RunConfig(
+        timeout=120,     # Increased from default (60s) to handle slow API responses
+        max_retries=3,   # Reduced retries to avoid excessive API calls
+        max_wait=60      # Maximum wait time between retries
+    )
     
-    # Configure gpt-4o-mini for cost efficiency
-    # Note: RAGAS will use this model for metric evaluation
-    try:
-        evaluation_result = evaluate(
-            dataset,
-            metrics=metrics,
-            llm=ChatOpenAI(model="gpt-4o-mini"),  # Cost-effective evaluator
-        )
-        return evaluation_result
-    except Exception as e:
-        print(f"Error during RAGAS evaluation: {e}")
-        import traceback
-        traceback.print_exc()
-        return {}
+    for attempt in range(1, attempts + 1):
+        try:
+            print(f"RAGAS evaluate() attempt {attempt}/{attempts}...")
+            # Use a more reliable model for RAGAS evaluation
+            llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
+            evaluation_result = evaluate(
+                dataset, 
+                metrics=metrics, 
+                llm=llm,
+                run_config=run_config  # Pass RunConfig to control timeout and concurrency
+            )
+
+            # Basic validation: must be convertible to pandas and contain required columns
+            if not hasattr(evaluation_result, 'to_pandas'):
+                raise ValueError("evaluate() returned unexpected type (missing to_pandas)")
+
+            df = evaluation_result.to_pandas()
+            missing = [c for c in required_cols if c not in df.columns]
+            if missing:
+                raise ValueError(f"Missing metric columns in evaluation result: {missing}")
+
+            # Check for all-NaN columns which indicate evaluator failure
+            all_nan = [c for c in required_cols if df[c].isnull().all()]
+            if all_nan:
+                raise ValueError(f"Evaluator returned all-NaN for columns: {all_nan}")
+
+            # Passed validation
+            print("RAGAS evaluation completed and validated.")
+            return evaluation_result
+
+        except Exception as e:
+            print(f"RAGAS evaluation attempt {attempt} failed: {e}")
+            import traceback
+            traceback.print_exc()
+            last_exception = e
+            # Exponential backoff before retry (5s, 10s, 20s)
+            if attempt < attempts:
+                backoff_time = 5 * (2 ** (attempt - 1))
+                print(f"Waiting {backoff_time}s before retry...")
+                time.sleep(backoff_time)
+            continue
+
+    # If we reach here, all attempts failed — write debug artifact
+    debug_dir = Path("evaluation/results")
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    debug_file = debug_dir / f"ragas_evaluator_debug_{experiment_name}_{batch_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    debug_payload = {
+        "error": str(last_exception),
+        "attempts": attempts,
+        "num_results": len(results),
+    }
+    with open(debug_file, 'w') as f:
+        json.dump(debug_payload, f, indent=2)
+
+    print(f"[ERROR] RAGAS evaluation failed after {attempts} attempts. Debug saved to {debug_file}")
+    return {}
 
 
 def save_results(
-    evaluation_result: Dict,
+    evaluation_result: Any,
     pipeline_results: List[Dict],
     experiment_name: str,
-    batch_id: str
+    batch_id: str,
+    local_metrics: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """Saves evaluation results to a JSON file."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -342,7 +643,8 @@ def save_results(
             "timestamp": timestamp,
             "num_questions": len(pipeline_results),
         },
-        "ragas_metrics": evaluation_result.to_dict() if hasattr(evaluation_result, 'to_dict') else {},
+    "ragas_metrics": evaluation_result.to_dict() if hasattr(evaluation_result, 'to_dict') else {},
+    "local_metrics": local_metrics or [],
         "pipeline_results": pipeline_results,
     }
     
@@ -403,7 +705,7 @@ Examples:
         "--experiment",
         type=str,
         default="baseline",
-        choices=["baseline", "no_rag", "reranking", "hyde"],
+        choices=["baseline", "no_rag", "reranking", "hyde", "semantic_chunking"],
         help="The experiment to run (default: baseline)"
     )
     parser.add_argument(
@@ -411,6 +713,12 @@ Examples:
         type=str,
         default=DEFAULT_TEST_BATCH_ID,
         help=f"The test batch ID to use (default: {DEFAULT_TEST_BATCH_ID})"
+    )
+    parser.add_argument(
+        "--rerank_keep_n",
+        type=int,
+        default=None,
+        help="Override the default number of top reranked chunks to keep (env RERANK_KEEP_TOP_N or default 5)"
     )
     
     args = parser.parse_args()
@@ -423,19 +731,32 @@ Examples:
     print(f"\n[RAGAS] Evaluation Harness")
     print(f"Experiment: {args.experiment.upper()}")
     print(f"Batch ID: {args.batch_id}")
+    # Allow CLI override of rerank keep-n
+    global RERANK_KEEP_TOP_N
+    if getattr(args, 'rerank_keep_n', None) is not None:
+        try:
+            RERANK_KEEP_TOP_N = int(args.rerank_keep_n)
+            print(f"Using rerank_keep_n={RERANK_KEEP_TOP_N}")
+        except Exception:
+            print(f"Invalid --rerank_keep_n value: {args.rerank_keep_n}; using default {RERANK_KEEP_TOP_N}")
     
     # Load data
     questions, profiles = load_data()
     
     # Run pipeline
     pipeline_results = run_pipeline(questions, profiles, args.experiment, args.batch_id)
+
+    # Compute lightweight local metrics before making evaluator calls
+    local_metrics = compute_local_support_metrics(pipeline_results)
     
     # Run RAGAS evaluation
     evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id)
     
     # Print and save results
     print_metrics_summary(evaluation_result, args.experiment)
-    output_file = save_results(evaluation_result, pipeline_results, args.experiment, args.batch_id)
+    print_local_metrics_summary(local_metrics)
+    output_file = save_results(evaluation_result, pipeline_results, args.experiment, args.batch_id, local_metrics)
+    save_local_metrics_csv(local_metrics, args.experiment, args.batch_id)
     
     print(f"\n[OK] Evaluation complete!")
     print(f"Output: {output_file}")

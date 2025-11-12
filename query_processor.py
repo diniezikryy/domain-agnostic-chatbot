@@ -519,6 +519,105 @@ CRITICAL RESPONSE RULES:
             print(f"Error during OpenAI API call: {e}")
             return "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
 
+    def process_query_stream_refactored(self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None):
+        """Process a query using refactored methods and yield response chunks for streaming."""
+        try:
+            # Determine the target batch
+            target_batch = batch_id or self.batch_manager.get_default_batch()
+            if not target_batch:
+                yield "data: " + json.dumps({"error": "No batch specified and no default batch set."}) + "\n\n"
+                return
+
+            # Ensure the correct batch's indexes are loaded
+            if not self._ensure_batch_loaded(target_batch):
+                yield "data: " + json.dumps({"error": f"Failed to load or switch to batch '{target_batch}'."}) + "\n\n"
+                return
+
+            print(f"Streaming query for batch: {target_batch} using refactored methods")
+
+            # 1. Run retrieval to get contexts
+            retrieval_data = self.run_retrieval(query, target_batch, user_profile)
+
+            # 2. Stream the generation using the retrieved contexts
+            yield from self._generate_response_stream_refactored(
+                query=query,
+                rag_chunks=retrieval_data["rag_chunks_details"],
+                research_results=retrieval_data["web_research_raw"],
+                user_profile=user_profile
+            )
+
+        except Exception as e:
+            import traceback
+            print(f"Error in process_query_stream_refactored: {e}")
+            traceback.print_exc()
+            yield "data: " + json.dumps({"error": f"An error occurred: {str(e)}"}) + "\n\n"
+
+    def _generate_response_stream_refactored(self, query: str, rag_chunks: List[Dict], research_results: Dict, user_profile: Optional[Dict] = None):
+        """Stream generation response using retrieved contexts."""
+        try:
+            # 1. Format Document Context
+            context_from_docs = self._format_rag_context_for_prompt(rag_chunks)
+
+            # 2. Format Profile Context
+            profile_info, salutation = self._format_profile_for_prompt(user_profile)
+
+            # 3. Combine Web Research into the prompt
+            research_context = ""
+            if research_results and research_results.get("answer"):
+                research_context = f"\n--- EXTERNAL WEB RESEARCH ---\n{research_results['answer']}\n--- END OF WEB RESEARCH ---"
+
+            # 4. Create the Final Prompt
+            prompt_instructions = f"""
+{salutation}
+Your task is to answer the user's question using the provided documents AND external research.
+
+User Question: {query}
+{profile_info}
+
+--- POLICY DOCUMENT CHUNKS ---
+{context_from_docs if context_from_docs else "No relevant information found in policy documents."}
+--- END OF DOCUMENTS ---
+{research_context}
+
+CRITICAL RESPONSE RULES:
+1. Base your answer on BOTH document chunks and external research.
+2. Prioritize document information if available.
+3. Use the user's specific policy tier (e.g., "P PLUS") when citing benefits.
+4. Cite document facts with [Source X: filename.pdf, Page Y].
+5. If using web research, state that (e.g., "External research shows...").
+"""
+
+            # 5. Call OpenAI API with streaming
+            try:
+                response = self.client.chat.completions.create(
+                    model="gpt-4-1106-preview",
+                    messages=[
+                        {"role": "system", "content": "You are an expert financial advisor..."},
+                        {"role": "user", "content": prompt_instructions},
+                    ],
+                    max_tokens=1500,
+                    temperature=0.0,
+                    stream=True  # Enable streaming
+                )
+
+                for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        yield "data: " + json.dumps({"content": content}) + "\n\n"
+
+                # Signal completion
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+
+            except Exception as e:
+                print(f"Error in OpenAI streaming call: {e}")
+                yield "data: " + json.dumps({"error": f"OpenAI API error: {str(e)}"}) + "\n\n"
+
+        except Exception as e:
+            import traceback
+            print(f"Error in _generate_response_stream_refactored: {e}")
+            traceback.print_exc()
+            yield "data: " + json.dumps({"error": f"An error occurred: {str(e)}"}) + "\n\n"
+
     def process_query_stream(self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None):
         """Process a query and yield response chunks for streaming."""
         try:
