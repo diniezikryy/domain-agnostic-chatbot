@@ -39,6 +39,7 @@ from langchain_openai import ChatOpenAI
 # Import your application classes
 from query_processor import QueryProcessor
 from batch_manager import BatchManager
+from utils.cache_manager import CacheManager
 
 
 MAX_CONTEXTS_FOR_RAGAS = 8
@@ -278,15 +279,23 @@ def run_pipeline(
     questions_data: List[Dict],
     profiles_data: Dict,
     experiment_name: str,
-    test_batch_id: str
+    test_batch_id: str,
+    cache_manager: Optional[CacheManager] = None
 ) -> List[Dict]:
     """
     Runs the RAG pipeline for all test questions and collects results
     based on the specified experiment.
+    
+    Args:
+        cache_manager: Optional cache manager for caching pipeline results
     """
     print(f"\n{'='*70}")
     print(f"Initializing RAG pipeline for experiment: {experiment_name.upper()}")
     print(f"Test batch: {test_batch_id}")
+    if cache_manager:
+        print("Cache: ENABLED")
+    else:
+        print("Cache: DISABLED")
     print(f"{'='*70}\n")
     
     batch_manager = BatchManager()
@@ -330,61 +339,91 @@ def run_pipeline(
         print(f"\n--- Processing Question: {question_id} ---")
         print(f"Q: {question}")
         
-        try:
-            # 1. Run Retrieval
-            retrieval_data = retrieval_func(query_processor, question, test_batch_id, user_profile)
-
-            # Trim contexts to avoid oversized evaluation prompts
-            rag_contexts = retrieval_data["rag_contexts_list"][:MAX_CONTEXTS_FOR_RAGAS]
-            web_contexts = retrieval_data["web_contexts_list"][:max(0, MAX_CONTEXTS_FOR_RAGAS - len(rag_contexts))]
-
-            retrieval_data["rag_contexts_list"] = rag_contexts
-            retrieval_data["rag_chunks_details"] = retrieval_data["rag_chunks_details"][:MAX_CONTEXTS_FOR_RAGAS]
-            retrieval_data["web_contexts_list"] = web_contexts
-
-            # Collate all contexts for RAGAS
-            all_contexts = rag_contexts + web_contexts
-
-            # For no_rag experiment, explicitly set contexts to empty
-            if experiment_name == "no_rag":
-                all_contexts = []
-
-            if not all_contexts:
-                print("[Warning] No context was retrieved.")
-                # RAGAS requires at least one context (even if empty string) to avoid validation errors
-                all_contexts = [""]
-            else:
-                print(f"[OK] Retrieved {len(all_contexts)} context chunks.")
-            
-            # 2. Run Generation
-            generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
-            print(f"A: {generated_answer[:100]}...")
-            
-            # 3. Store results for RAGAS and include retrieval metadata (rerank scores etc.)
-            # Ensure any mapping-like fields use string keys so pyarrow/datasets can
-            # serialize them reliably (pyarrow requires dict keys to be str/bytes).
-            raw_rerank_info = retrieval_data.get("rerank_info", {}) or {}
-            safe_rerank_info = {str(k): v for k, v in raw_rerank_info.items()}
-
-            results.append({
-                "question": question,
-                "answer": generated_answer,
-                "contexts": all_contexts,
-                "ground_truth": ground_truth,
-                "question_id": question_id,
-                # include detailed retrieval info for debugging/analysis
-                "rag_chunks": retrieval_data.get("rag_chunks_details", []),
-                "rag_contexts": retrieval_data.get("rag_contexts_list", []),
-                "web_research": retrieval_data.get("web_research_raw", {}),
-                "rerank_info": safe_rerank_info,
-            })
+        # Check cache first
+        cached_result = None
+        if cache_manager:
+            cached_result = cache_manager.get(
+                question=question,
+                batch_id=test_batch_id,
+                experiment_name=experiment_name,
+                user_profile_id=profile_id
+            )
         
-        except Exception as e:
-            print(f"[Error] Error processing question: {e}")
-            import traceback
-            traceback.print_exc()
-            # Continue to next question
-            continue
+        if cached_result:
+            # Use cached data
+            retrieval_data = cached_result["retrieval_data"]
+            generated_answer = cached_result["generated_answer"]
+            print(f"[Using cached result]")
+        else:
+            # Run the pipeline
+            try:
+                # 1. Run Retrieval
+                retrieval_data = retrieval_func(query_processor, question, test_batch_id, user_profile)
+                
+                # 2. Run Generation
+                generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
+                print(f"A: {generated_answer[:100]}...")
+                
+                # Save to cache
+                if cache_manager:
+                    cache_manager.put(
+                        question=question,
+                        batch_id=test_batch_id,
+                        experiment_name=experiment_name,
+                        retrieval_data=retrieval_data,
+                        generated_answer=generated_answer,
+                        user_profile_id=profile_id,
+                        metadata={"question_id": question_id}
+                    )
+            
+            except Exception as e:
+                print(f"[Error] Error processing question: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue to next question
+                continue
+        
+        # Trim contexts to avoid oversized evaluation prompts
+        rag_contexts = retrieval_data["rag_contexts_list"][:MAX_CONTEXTS_FOR_RAGAS]
+        web_contexts = retrieval_data["web_contexts_list"][:max(0, MAX_CONTEXTS_FOR_RAGAS - len(rag_contexts))]
+
+        retrieval_data["rag_contexts_list"] = rag_contexts
+        retrieval_data["rag_chunks_details"] = retrieval_data["rag_chunks_details"][:MAX_CONTEXTS_FOR_RAGAS]
+        retrieval_data["web_contexts_list"] = web_contexts
+
+        # Collate all contexts for RAGAS
+        all_contexts = rag_contexts + web_contexts
+
+        # For no_rag experiment, explicitly set contexts to empty
+        if experiment_name == "no_rag":
+            all_contexts = []
+
+        if not all_contexts:
+            print("[Warning] No context was retrieved.")
+            # RAGAS requires at least one context (even if empty string) to avoid validation errors
+            all_contexts = [""]
+        else:
+            print(f"[OK] Retrieved {len(all_contexts)} context chunks.")
+        
+        # 3. Store results for RAGAS and include retrieval metadata (rerank scores etc.)
+        # Ensure any mapping-like fields use string keys so pyarrow/datasets can
+        # serialize them reliably (pyarrow requires dict keys to be str/bytes).
+        raw_rerank_info = retrieval_data.get("rerank_info", {}) or {}
+        safe_rerank_info = {str(k): v for k, v in raw_rerank_info.items()}
+
+        results.append({
+            "question": question,
+            "answer": generated_answer,
+            "contexts": all_contexts,
+            "ground_truth": ground_truth,
+            "question_id": question_id,
+            "user_profile_id": profile_id,  # Add user_profile_id for RAGAS caching
+            # include detailed retrieval info for debugging/analysis
+            "rag_chunks": retrieval_data.get("rag_chunks_details", []),
+            "rag_contexts": retrieval_data.get("rag_contexts_list", []),
+            "web_research": retrieval_data.get("web_research_raw", {}),
+            "rerank_info": safe_rerank_info,
+        })
     
     return results
 
@@ -548,16 +587,107 @@ def save_local_metrics_csv(
     print(f"[OK] Local metrics saved to: {output_path}")
     return str(output_path)
 
-def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: str) -> Any:
+def check_cached_ragas_metrics(
+    results: List[Dict],
+    cache_manager: Optional[CacheManager],
+    experiment_name: str,
+    batch_id: str
+) -> Optional[Dict[str, List[float]]]:
+    """Check if all questions have cached RAGAS metrics.
+    
+    Returns:
+        Dict mapping metric names to lists of scores if all cached, None otherwise
+    """
+    if not cache_manager:
+        return None
+    
+    # Check if all questions have cached RAGAS metrics
+    all_cached = True
+    cached_metrics = {
+        'faithfulness': [],
+        'answer_relevancy': [],
+        'context_precision': [],
+        'context_recall': [],
+        'answer_correctness': []
+    }
+    
+    for result in results:
+        question = result.get('question')
+        question_id = result.get('question_id')
+        user_profile_id = result.get('user_profile_id')  # May not exist in result dict
+        
+        # Try to get RAGAS metrics from cache
+        metrics = cache_manager.get_ragas_metrics(
+            question=question,
+            batch_id=batch_id,
+            experiment_name=experiment_name,
+            user_profile_id=user_profile_id
+        )
+        
+        if metrics:
+            # Add metrics to our collection
+            for metric_name in cached_metrics.keys():
+                cached_metrics[metric_name].append(metrics.get(metric_name, 0.0))
+        else:
+            all_cached = False
+            break
+    
+    if all_cached:
+        print(f"[Cache HIT] All {len(results)} questions have cached RAGAS metrics!")
+        return cached_metrics
+    else:
+        print(f"[Cache MISS] RAGAS metrics not fully cached, will compute...")
+        return None
+
+
+def run_ragas_evaluation(
+    results: List[Dict],
+    experiment_name: str,
+    batch_id: str,
+    cache_manager: Optional[CacheManager] = None
+) -> Any:
     """Runs RAGAS metrics on the collected results with validation and retries.
 
     This wrapper will attempt evaluate() up to 3 times and validate the returned
     DataFrame to ensure expected metric columns exist and are not all-NaN.
     On repeated failures it writes a debug artifact to `evaluation/results/` and returns {}.
+    
+    Args:
+        cache_manager: Optional cache manager for caching RAGAS metrics
     """
     print(f"\n{'='*70}")
     print("Running RAGAS Evaluation Metrics (safe wrapper)...")
     print(f"{'='*70}\n")
+    
+    # Check if all RAGAS metrics are cached
+    cached_metrics = check_cached_ragas_metrics(results, cache_manager, experiment_name, batch_id)
+    if cached_metrics:
+        # Build a mock evaluation result using cached metrics
+        print("RAGAS evaluation completed (from cache) and validated.\n")
+        
+        # Create a DataFrame-like structure that matches what evaluate() returns
+        import pandas as pd
+        df_data = {
+            'user_input': [r['question'] for r in results],
+            'retrieved_contexts': [r['contexts'] for r in results],
+            'response': [r['answer'] for r in results],
+            'reference': [r['ground_truth'] for r in results],
+            'faithfulness': cached_metrics['faithfulness'],
+            'answer_relevancy': cached_metrics['answer_relevancy'],
+            'context_precision': cached_metrics['context_precision'],
+            'context_recall': cached_metrics['context_recall'],
+            'answer_correctness': cached_metrics['answer_correctness']
+        }
+        
+        # Create a mock evaluation result object
+        class MockEvaluationResult:
+            def __init__(self, df):
+                self._df = df
+            
+            def to_pandas(self):
+                return self._df
+        
+        return MockEvaluationResult(pd.DataFrame(df_data))
 
     if not results:
         print("ERROR: No results to evaluate!")
@@ -618,6 +748,40 @@ def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: st
 
             # Passed validation
             print("RAGAS evaluation completed and validated.")
+            
+            # Save RAGAS metrics to cache for each question
+            if cache_manager:
+                print("Saving RAGAS metrics to cache...")
+                import pandas as pd
+                for i, result in enumerate(results):
+                    question = result.get('question')
+                    # Try to get user_profile_id from different possible locations
+                    user_profile_id = None
+                    # First check if it's in the question data (from test_data)
+                    for q_data in [r for r in results if r.get('question') == question]:
+                        if 'user_profile_id' in q_data:
+                            user_profile_id = q_data['user_profile_id']
+                            break
+                    
+                    # Extract metrics for this question from the DataFrame
+                    ragas_metrics = {
+                        'faithfulness': float(df.iloc[i]['faithfulness']) if pd.notna(df.iloc[i]['faithfulness']) else 0.0,
+                        'answer_relevancy': float(df.iloc[i]['answer_relevancy']) if pd.notna(df.iloc[i]['answer_relevancy']) else 0.0,
+                        'context_precision': float(df.iloc[i]['context_precision']) if pd.notna(df.iloc[i]['context_precision']) else 0.0,
+                        'context_recall': float(df.iloc[i]['context_recall']) if pd.notna(df.iloc[i]['context_recall']) else 0.0,
+                        'answer_correctness': float(df.iloc[i]['answer_correctness']) if pd.notna(df.iloc[i]['answer_correctness']) else 0.0
+                    }
+                    
+                    # Update cache entry with RAGAS metrics
+                    cache_manager.update_ragas_metrics(
+                        question=question,
+                        batch_id=batch_id,
+                        experiment_name=experiment_name,
+                        ragas_metrics=ragas_metrics,
+                        user_profile_id=user_profile_id
+                    )
+                print(f"[Cache] Saved RAGAS metrics for {len(results)} questions.")
+            
             return evaluation_result
 
         except Exception as e:
@@ -811,6 +975,22 @@ Examples:
         default=None,
         help="Override the default number of top reranked chunks to keep (env RERANK_KEEP_TOP_N or default 5)"
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable caching (force fresh pipeline runs)"
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear cache before running evaluation"
+    )
+    parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=None,
+        help="Cache TTL in hours (default: never expire)"
+    )
     
     args = parser.parse_args()
     
@@ -831,23 +1011,38 @@ Examples:
         except Exception:
             print(f"Invalid --rerank_keep_n value: {args.rerank_keep_n}; using default {RERANK_KEEP_TOP_N}")
     
+    # Initialize cache manager
+    cache_manager = None
+    if not args.no_cache:
+        cache_manager = CacheManager(ttl_hours=args.cache_ttl)
+        if args.clear_cache:
+            print("[Cache] Clearing cache...")
+            cache_manager.clear(experiment_name=args.experiment, batch_id=args.batch_id)
+        print(f"[Cache] Initialized (TTL: {args.cache_ttl or 'never expire'})")
+    else:
+        print("[Cache] Disabled by --no-cache flag")
+    
     # Load data
     questions, profiles = load_data()
     
     # Run pipeline
-    pipeline_results = run_pipeline(questions, profiles, args.experiment, args.batch_id)
+    pipeline_results = run_pipeline(questions, profiles, args.experiment, args.batch_id, cache_manager)
 
     # Compute lightweight local metrics before making evaluator calls
     local_metrics = compute_local_support_metrics(pipeline_results)
     
-    # Run RAGAS evaluation
-    evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id)
+    # Run RAGAS evaluation (with caching)
+    evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id, cache_manager)
     
     # Print and save results
     print_metrics_summary(evaluation_result, args.experiment)
     print_local_metrics_summary(local_metrics)
     output_file = save_results(evaluation_result, pipeline_results, args.experiment, args.batch_id, local_metrics)
     save_local_metrics_csv(local_metrics, args.experiment, args.batch_id)
+    
+    # Print cache statistics
+    if cache_manager:
+        cache_manager.print_stats()
     
     print(f"\n[OK] Evaluation complete!")
     print(f"Output: {output_file}")
