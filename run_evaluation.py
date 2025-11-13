@@ -21,6 +21,7 @@ import csv
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import numpy as np
 
 from dotenv import load_dotenv
 from datasets import Dataset
@@ -360,6 +361,11 @@ def run_pipeline(
             print(f"A: {generated_answer[:100]}...")
             
             # 3. Store results for RAGAS and include retrieval metadata (rerank scores etc.)
+            # Ensure any mapping-like fields use string keys so pyarrow/datasets can
+            # serialize them reliably (pyarrow requires dict keys to be str/bytes).
+            raw_rerank_info = retrieval_data.get("rerank_info", {}) or {}
+            safe_rerank_info = {str(k): v for k, v in raw_rerank_info.items()}
+
             results.append({
                 "question": question,
                 "answer": generated_answer,
@@ -370,7 +376,7 @@ def run_pipeline(
                 "rag_chunks": retrieval_data.get("rag_chunks_details", []),
                 "rag_contexts": retrieval_data.get("rag_contexts_list", []),
                 "web_research": retrieval_data.get("web_research_raw", {}),
-                "rerank_info": retrieval_data.get("rerank_info", {}),
+                "rerank_info": safe_rerank_info,
             })
         
         except Exception as e:
@@ -679,9 +685,63 @@ def save_results(
         "pipeline_results": pipeline_results,
     }
     
-    # Save to JSON
-    with open(output_filename, 'w') as f:
-        json.dump(output_data, f, indent=2)
+    # Helper: sanitize objects that are not JSON serializable (numpy types, Path, bytes, etc.)
+    def sanitize_for_json(obj):
+        """Recursively convert non-JSON-serializable objects into JSON-friendly types."""
+        # Primitive types that are already serializable
+        if obj is None or isinstance(obj, (str, bool, int, float)):
+            # Convert numpy scalar floats/ints to native Python types if needed
+            if isinstance(obj, (np.floating, np.integer)):
+                return obj.item()
+            return obj
+
+        # Numpy scalar
+        if isinstance(obj, np.generic):
+            return obj.item()
+
+        # Numpy arrays
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+
+        # Dictionaries: ensure keys are strings and values sanitized
+        if isinstance(obj, dict):
+            new = {}
+            for k, v in obj.items():
+                try:
+                    key = str(k)
+                except Exception:
+                    key = json.dumps(k)
+                new[key] = sanitize_for_json(v)
+            return new
+
+        # Lists / tuples / sets
+        if isinstance(obj, (list, tuple, set)):
+            return [sanitize_for_json(v) for v in obj]
+
+        # Bytes -> decode if possible, otherwise base64
+        if isinstance(obj, (bytes, bytearray)):
+            try:
+                return obj.decode('utf-8')
+            except Exception:
+                import base64
+                return base64.b64encode(obj).decode('ascii')
+
+        # Path or datetime
+        if isinstance(obj, Path):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+
+        # Fallback: try to convert to string
+        try:
+            return str(obj)
+        except Exception:
+            return None
+
+    # Save to JSON (sanitize first to avoid numpy/other non-serializable types)
+    cleaned = sanitize_for_json(output_data)
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        json.dump(cleaned, f, indent=2, ensure_ascii=False)
     
     print(f"\n[OK] Results saved to: {output_filename}")
     return output_filename

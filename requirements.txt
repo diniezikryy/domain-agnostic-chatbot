@@ -42,3 +42,5 @@ datasets==4.4.1
 flashrank==0.2.10
 langchain-openai==0.2.14
 langchain-core==0.3.28
+azure-ai-formrecognizer==3.3.0
+azure-core

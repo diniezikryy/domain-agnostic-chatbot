@@ -8,7 +8,7 @@ import json
 import pickle
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Import utilities (to be created)
 from utils.file_handlers import FileHandler
@@ -23,10 +23,10 @@ class DocumentProcessor:
         self.batch_manager = BatchManager()
 
     def create_batch(self, batch_id: str, document_paths: List[str],
-                    batch_name: str = None, description: str = "",
+                    batch_name: Optional[str] = None, description: Optional[str] = "",
                     embedding_model_name: str = "text-embedding-3-small",
                     embedding_dimension: int = 1536,
-                    chunking_strategy: str = "semantic") -> bool:
+                    chunking_strategy: str = "page") -> bool:
         """Create a new document batch with FAISS and BM25 indexes.
         
         Args:

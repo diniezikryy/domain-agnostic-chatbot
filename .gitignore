@@ -523,3 +523,4 @@ debug_*.py
 temp_*.py
 scratch_*.py
 .github/instructions/RAGAS_Improvement_Plan.instructions.md
+domain-agnostic-chatbot-multi-branches.code-workspace
