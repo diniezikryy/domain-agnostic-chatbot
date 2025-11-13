@@ -103,7 +103,7 @@ class QueryProcessor:
     # == NEW FUNCTIONS FOR RAGAS EVALUATION: Testable Retrieval & Generation ==
     # =========================================================================
 
-    def run_retrieval(self, query: str, batch_id: str, user_profile: Optional[Dict] = None, skip_expansion: bool = False) -> Dict[str, Any]:
+    def run_retrieval(self, query: str, batch_id: str, user_profile: Optional[Dict] = None, skip_expansion: bool = False, top_k: int = 50, allow_web_research: Optional[bool] = None) -> Dict[str, Any]:
         """
         Runs the full retrieval pipeline (intent, expansion, RAG, and web research).
         Returns a dictionary containing all retrieved contexts.
@@ -140,8 +140,11 @@ class QueryProcessor:
             expanded_query = query
         else:
             expanded_query = self._expand_query(query)
+
+        # Use configurable top_k so the evaluation harness can control the
+        # candidate pool size (important for fair experiments).
         raw_search_results = self.search_engine.hybrid_search(
-            query=expanded_query, top_k=50  # Retrieve a large candidate set
+            query=expanded_query, top_k=top_k
         )
         unique_results = self._deduplicate_results(raw_search_results)
         
@@ -153,11 +156,16 @@ class QueryProcessor:
             len(unique_results) == 0
         )
 
-        # 4. Run Web Research if Needed (but only if TAVILY_API_KEY is available)
+        # 4. Run Web Research if Needed (but only if allowed/available)
         research_results = {"answer": "", "sources": []}
         tavily_available = os.getenv("TAVILY_API_KEY") is not None
-        
-        if needs_research and tavily_available:
+
+        # allow_web_research parameter overrides environment availability and
+        # lets the evaluation harness disable web calls to keep experiments fair
+        # and reproducible.
+        allow_web = allow_web_research if allow_web_research is not None else tavily_available
+
+        if needs_research and allow_web:
             print("--- [EVAL] Triggering DeepResearch (Web Search) ---")
             try:
                 researcher = DeepResearch()
@@ -166,8 +174,8 @@ class QueryProcessor:
             except Exception as e:
                 print(f"Error during deep research: {e}")
                 research_results = {"answer": "", "sources": []}
-        elif needs_research and not tavily_available:
-            print("--- [EVAL] Web research needed but TAVILY_API_KEY not available, skipping ---")
+        elif needs_research and not allow_web:
+            print("--- [EVAL] Web research needed but disabled for this experiment, skipping ---")
         
         # 5. Collate all contexts for RAGAS
         rag_contexts = [chunk.get("content", "") for chunk in unique_results]

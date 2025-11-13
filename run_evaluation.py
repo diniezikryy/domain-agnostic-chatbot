@@ -22,6 +22,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import numpy as np
+import pandas as pd
 
 from dotenv import load_dotenv
 from datasets import Dataset
@@ -41,13 +42,21 @@ from query_processor import QueryProcessor
 from batch_manager import BatchManager
 
 
-MAX_CONTEXTS_FOR_RAGAS = 8
-# Reranker configuration: default number of top-ranked chunks to keep
-RERANK_KEEP_TOP_N = int(os.getenv("RERANK_KEEP_TOP_N", "5"))
+MAX_CONTEXTS_FOR_RAGAS = int(os.getenv("MAX_CONTEXTS_FOR_RAGAS", "8"))
 
-# Number of top retrieval chunks to keep when generating answers (prevents confounding
-# improvements due to different candidate set sizes between baseline and re-ranking)
-GENERATION_TOP_K = 5
+# Number of top retrieval chunks to keep when generating answers.
+# Default: use the same value as MAX_CONTEXTS_FOR_RAGAS to ensure
+# evaluation (RAGAS) and generation receive the same context budget.
+GENERATION_TOP_K = int(os.getenv("GENERATION_TOP_K", str(MAX_CONTEXTS_FOR_RAGAS)))
+
+# Reranker configuration: default number of top-ranked chunks to keep.
+# By default this will fall back to the generation top-k so reranking does not
+# accidentally return a different-sized candidate set to the generator.
+RERANK_KEEP_TOP_N = int(os.getenv("RERANK_KEEP_TOP_N", str(GENERATION_TOP_K)))
+
+# Evaluation tuning: candidate pool size and whether to allow web research during experiments
+RETRIEVAL_CANDIDATE_POOL = int(os.getenv("RETRIEVAL_CANDIDATE_POOL", "50"))
+USE_WEB_RESEARCH = os.getenv("USE_WEB_RESEARCH", "false").lower() in ("1", "true", "yes")
 
 
 # Simple manager to encapsulate FlashRank initialization and calls.
@@ -129,7 +138,15 @@ def run_retrieval_baseline(
     user_profile: Optional[Dict]
 ) -> Dict[str, Any]:
     """Runs the default retrieval pipeline."""
-    retrieval_data = query_processor.run_retrieval(query, batch_id, user_profile)
+    # Ensure the retrieval candidate pool size and web-research policy are applied
+    retrieval_data = query_processor.run_retrieval(
+        query=query,
+        batch_id=batch_id,
+        user_profile=user_profile,
+        skip_expansion=False,
+        top_k=RETRIEVAL_CANDIDATE_POOL,
+        allow_web_research=USE_WEB_RESEARCH,
+    )
 
     # Keep only the top-K retrieved chunks for generation to avoid a confounding
     # variable where the baseline uses many more candidates than the reranker.
@@ -183,7 +200,15 @@ def run_retrieval_rerank(
 ) -> Dict[str, Any]:
     """Experiment 2: Runs retrieval and adds a re-ranking step using FlashRank."""
     print("--- [EVAL] Running Retrieval (RE-RANKING) ---")
-    retrieval_data = query_processor.run_retrieval(query, batch_id, user_profile)
+    # Use same candidate pool and web research setting as baseline for fairness
+    retrieval_data = query_processor.run_retrieval(
+        query=query,
+        batch_id=batch_id,
+        user_profile=user_profile,
+        skip_expansion=False,
+        top_k=RETRIEVAL_CANDIDATE_POOL,
+        allow_web_research=USE_WEB_RESEARCH,
+    )
     
     # Re-rank the document chunks (using the centralized RerankerManager)
     rag_chunks = retrieval_data.get("rag_chunks_details", [])
@@ -220,13 +245,16 @@ def run_retrieval_rerank(
         chunk['rerank_score'] = info.get('rerank_score')
         chunk['rerank_rank'] = info.get('rerank_rank')
 
-    # Decide how many top-ranked chunks to keep (use GENERATION_TOP_K to ensure
-    # the baseline and reranking experiments operate over the same candidate set size)
+    # Decide how many top-ranked chunks to keep.
+    # Base this on GENERATION_TOP_K (the number that will be used for generation),
+    # but allow an explicit RERANK_KEEP_TOP_N to further restrict it.
     keep_n = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else 5
+    if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0:
+        keep_n = min(keep_n, RERANK_KEEP_TOP_N)
 
-    # Build set of top ids to keep
+    # Build set of top ids to keep (filter None values defensively)
     top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
-    reranked_indices = {int(i) for i in top_ids}
+    reranked_indices = {int(i) for i in top_ids if i is not None}
 
     final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
 
@@ -254,18 +282,43 @@ Do not say you don't know. Be specific and detailed.
 
 Question: {query}"""
     
-    hyde_response = query_processor.client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": hyde_prompt}],
-        max_tokens=150,
-        temperature=0.0
-    )
-    hyde_answer = hyde_response.choices[0].message.content
-    print(f"HyDE Answer: {hyde_answer[:100]}...")
+    try:
+        hyde_response = query_processor.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": hyde_prompt}],
+            max_tokens=150,
+            temperature=0.0
+        )
+        # Safely extract the text content
+        hyde_answer = None
+        if hasattr(hyde_response, 'choices') and hyde_response.choices:
+            first_choice = hyde_response.choices[0]
+            # Some SDKs place content under .message.content, others under .text
+            if hasattr(first_choice, 'message') and getattr(first_choice.message, 'content', None) is not None:
+                hyde_answer = first_choice.message.content
+            elif getattr(first_choice, 'text', None) is not None:
+                hyde_answer = first_choice.text
+    except Exception as e:
+        print(f"Warning: HyDE generation failed: {e}")
+        hyde_answer = None
+
+    if not hyde_answer or not isinstance(hyde_answer, str) or hyde_answer.strip() == "":
+        print("HyDE returned no usable answer; falling back to original query for retrieval.")
+        hyde_answer = query
+    else:
+        print(f"HyDE Answer: {hyde_answer[:100]}...")
     
     # 2. Run retrieval using the hypothetical answer as query
     # This leverages semantic search to find documents that match the hypothetical response
-    retrieval_data = query_processor.run_retrieval(hyde_answer, batch_id, user_profile, skip_expansion=True)
+    # Use HyDE answer for semantic retrieval but keep candidate pool size consistent
+    retrieval_data = query_processor.run_retrieval(
+        query=str(hyde_answer),
+        batch_id=batch_id,
+        user_profile=user_profile,
+        skip_expansion=True,
+        top_k=RETRIEVAL_CANDIDATE_POOL,
+        allow_web_research=USE_WEB_RESEARCH,
+    )
     
     return retrieval_data
 
@@ -445,8 +498,15 @@ def run_retrieval_semantic_chunking(
         print(f"Failed to load semantic batch '{semantic_batch_id}'. Falling back to baseline.")
         return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
 
-    # Run retrieval against the semantic batch
-    return query_processor.run_retrieval(query, semantic_batch_id, user_profile)
+    # Run retrieval against the semantic batch (keep candidate pool and web research consistent)
+    return query_processor.run_retrieval(
+        query=query,
+        batch_id=semantic_batch_id,
+        user_profile=user_profile,
+        skip_expansion=False,
+        top_k=RETRIEVAL_CANDIDATE_POOL,
+        allow_web_research=USE_WEB_RESEARCH,
+    )
 
 
 # =========================================================================
@@ -679,6 +739,11 @@ def save_results(
             "batch_id": batch_id,
             "timestamp": timestamp,
             "num_questions": len(pipeline_results),
+            # Include evaluation run configuration so results are self-describing
+            "retrieval_candidate_pool": RETRIEVAL_CANDIDATE_POOL,
+            "use_web_research": bool(USE_WEB_RESEARCH),
+            "rerank_keep_top_n": RERANK_KEEP_TOP_N,
+            "generation_top_k": GENERATION_TOP_K,
         },
         "ragas_metrics": ragas_metrics,
         "local_metrics": local_metrics or [],
@@ -747,31 +812,99 @@ def save_results(
     return output_filename
 
 
-def print_metrics_summary(evaluation_result: Dict, experiment_name: str):
-    """Prints a summary of RAGAS metrics."""
+def print_metrics_summary(evaluation_result: Any, pipeline_results: List[Dict[str, Any]], experiment_name: str, show_table: bool = True):
+    """Prints a combined table of pipeline results and RAGAS metrics.
+
+    The function attempts to merge the per-question RAGAS metrics (if available)
+    with the original pipeline results (question, generated answer, ground truth,
+    contexts) and prints a readable table to the console followed by a compact
+    metrics summary (means).
+    """
     print(f"\n{'='*70}")
     print(f"RAGAS Evaluation Results: {experiment_name.upper()}")
     print(f"{'='*70}\n")
-    
-    if not evaluation_result or not hasattr(evaluation_result, 'to_pandas'):
-        print("No metrics to display.")
-        return
-    
-    df = evaluation_result.to_pandas()
-    
-    # Print column names
-    print("Metrics Columns:")
-    print(df.columns.tolist())
-    print()
-    
-    # Print summary statistics for each metric
-    print("Summary Statistics:")
-    print(df.describe().to_string())
-    print()
-    
-    # Print detailed results
-    print("Detailed Results:")
-    print(df.to_string())
+
+    # Build a dataframe from pipeline results (safe fallback if evaluator failed)
+    pipeline_df = pd.DataFrame(pipeline_results)
+
+    # Normalize some common column names
+    # pipeline_df expected keys: question, answer, ground_truth, question_id, contexts
+    if 'question' not in pipeline_df.columns and 'user_input' in pipeline_df.columns:
+        pipeline_df = pipeline_df.rename(columns={'user_input': 'question'})
+
+    # Shortening helpers
+    def shorten_text(t, max_len=300):
+        if t is None:
+            return ''
+        s = str(t)
+        return (s[:max_len] + '...') if len(s) > max_len else s
+
+    def contexts_count_preview(ctxs):
+        try:
+            if not ctxs:
+                return '0'
+            if isinstance(ctxs, (list, tuple)):
+                preview = shorten_text(ctxs[0], 200)
+                return f"{len(ctxs)} [{preview}]"
+            # If it's a string, just shorten it
+            return shorten_text(ctxs, 200)
+        except Exception:
+            return 'N/A'
+
+    metrics_cols = ['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall', 'answer_correctness']
+
+    # If evaluation_result is valid, extract metrics df
+    metrics_df = None
+    if evaluation_result and hasattr(evaluation_result, 'to_pandas'):
+        try:
+            metrics_df = evaluation_result.to_pandas()
+        except Exception:
+            metrics_df = None
+
+    # Build combined rows (preserve order)
+    combined_rows = []
+    num_rows = max(len(pipeline_df), 0)
+    for i in range(num_rows):
+        row: Dict[str, Any] = {}
+        pr = pipeline_df.iloc[i].to_dict() if i < len(pipeline_df) else {}
+
+        row['question_id'] = pr.get('question_id', pr.get('question_id', f'Q{i}'))
+        row['question'] = shorten_text(pr.get('question') or pr.get('user_input') or '')
+        row['answer'] = shorten_text(pr.get('answer') or pr.get('response') or '')
+        row['ground_truth'] = shorten_text(pr.get('ground_truth') or pr.get('reference') or '')
+        row['contexts'] = contexts_count_preview(pr.get('contexts') or pr.get('retrieved_contexts') or pr.get('rag_contexts') or [])
+
+        # Merge metrics if available
+        if metrics_df is not None and i < len(metrics_df):
+            for col in metrics_cols:
+                row[col] = metrics_df.iloc[i][col] if col in metrics_df.columns else None
+        else:
+            for col in metrics_cols:
+                row[col] = None
+
+        combined_rows.append(row)
+
+    combined_df = pd.DataFrame(combined_rows)
+
+    # Configure pandas display options for readability
+    if show_table:
+        with pd.option_context('display.max_colwidth', 200, 'display.width', 200):
+            if combined_df.empty:
+                print("No pipeline rows to display.")
+            else:
+                print("Full per-question results:")
+                print(combined_df.to_string(index=False))
+    else:
+        print("[Info] Per-question table suppressed (show_table=False).")
+
+    # Print compact metrics summary if we have metrics
+    if metrics_df is not None and not metrics_df.empty:
+        summary = {col: {'mean': float(metrics_df[col].mean()), 'std': float(metrics_df[col].std())} for col in metrics_cols if col in metrics_df.columns}
+        print(f"\nMetric means (per-question):")
+        for k, v in summary.items():
+            print(f"  - {k}: mean={v['mean']:.4f}, std={v['std']:.4f}")
+    else:
+        print("\nNo RAGAS metrics available to summarize.")
 
 
 # =========================================================================
@@ -811,12 +944,36 @@ Examples:
         default=None,
         help="Override the default number of top reranked chunks to keep (env RERANK_KEEP_TOP_N or default 5)"
     )
+    parser.add_argument(
+        "--skip_ragas",
+        dest="skip_ragas",
+        action="store_true",
+        help="Skip the RAGAS evaluation step (fast mode) and only run pipeline + local metrics."
+    )
+    # Toggle to show or hide the per-question table output
+    table_group = parser.add_mutually_exclusive_group()
+    table_group.add_argument(
+        "--show_table",
+        dest="show_table",
+        action="store_true",
+        help="Show combined per-question table in output (default)"
+    )
+    table_group.add_argument(
+        "--no_show_table",
+        dest="show_table",
+        action="store_false",
+        help="Do not show the combined per-question table"
+    )
+    parser.set_defaults(show_table=True)
     
     args = parser.parse_args()
     
     # Load environment variables
     load_dotenv()
-    if not os.getenv("OPENAI_API_KEY"):
+    # If the user requests a fast run that skips RAGAS evaluation, allow running
+    # without an OPENAI_API_KEY (generation will likely fail but the per-question
+    # table will still be printed). Otherwise require the key.
+    if not os.getenv("OPENAI_API_KEY") and not getattr(args, 'skip_ragas', False):
         raise ValueError("OPENAI_API_KEY must be set in .env file")
     
     print(f"\n[RAGAS] Evaluation Harness")
@@ -840,11 +997,15 @@ Examples:
     # Compute lightweight local metrics before making evaluator calls
     local_metrics = compute_local_support_metrics(pipeline_results)
     
-    # Run RAGAS evaluation
-    evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id)
+    # Run RAGAS evaluation (skip if requested to speed up runs)
+    if getattr(args, 'skip_ragas', False):
+        print("\n[Info] Skipping RAGAS evaluation as requested (--skip_ragas).")
+        evaluation_result = {}
+    else:
+        evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id)
     
     # Print and save results
-    print_metrics_summary(evaluation_result, args.experiment)
+    print_metrics_summary(evaluation_result, pipeline_results, args.experiment, show_table=args.show_table)
     print_local_metrics_summary(local_metrics)
     output_file = save_results(evaluation_result, pipeline_results, args.experiment, args.batch_id, local_metrics)
     save_local_metrics_csv(local_metrics, args.experiment, args.batch_id)

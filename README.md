@@ -245,6 +245,23 @@ python run_evaluation.py --experiment hyde --batch_id my_policies
 python run_evaluation.py --experiment baseline --batch_id my_policies_large
 ```
 
+For a detailed, step-by-step guide (PowerShell examples, environment knobs, interpretation guidance, and troubleshooting) see the RAGAS evaluation docs:
+
+- `docs/RAGAS_EVALUATION.md` — quick guide with runnable PowerShell snippets and interpretation tips.
+
+
+### Experiment Configurations
+
+| Experiment | Retrieval Strategy | Generation Context | Purpose |
+|------------|-------------------|-------------------|---------|
+| **baseline** | Hybrid search (FAISS + BM25) + web research | Full RAG + web | Standard RAG benchmark |
+| **no_rag** | Retrieval runs but ignored | None (LLM-only) | Measure RAG value |
+| **reranking** | + FlashRank re-ranking (top 5) | Re-ranked chunks | Improve context precision |
+| **hyde** | Hypothetical answer as query | Full RAG + web | Better recall for complex queries |
+| **semantic_chunking** | Header-aware semantic chunks | Full RAG + web | Better chunk boundaries |
+
+**Shared Config:** GPT-4o (intent), GPT-4-turbo (generation), GPT-4o-mini (RAGAS), text-embedding-3-small. Generation context size defaults to the evaluation context budget (MAX_CONTEXTS_FOR_RAGAS, default 8) and is configurable via the environment variable `GENERATION_TOP_K`.
+
 ## Configuration
 
 ### Environment Variables
