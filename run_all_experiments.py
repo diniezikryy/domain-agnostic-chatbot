@@ -144,7 +144,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--experiments",
         nargs="+",
-        default=["baseline", "no_rag", "reranking", "hyde", "semantic_chunking"],
+        default=["baseline", "no_rag", "reranking", "grounded_hyde", "combined_best", "semantic_chunking"],
         help="List of experiments to run (space separated).",
     )
     parser.add_argument(

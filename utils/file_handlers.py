@@ -140,12 +140,13 @@ class FileHandler:
 
     # --- Helper Methods (From Evaluation Repo) ---
     def _create_semantic_chunks(self, text: str) -> Tuple[List[str], str]:
-        MAX_CHUNK_CHARS = 6000 
+        MAX_CHUNK_CHARS = 2000  # Reduced to avoid token limit (8192 tokens / 4 chars per token = ~2000 chars safe)
         MIN_CHUNK_CHARS = 50
         
         has_headers = re.search(r'^#{1,6}\s+', text, re.MULTILINE)
         if not has_headers:
-            return [text], "fixed"
+            # No headers, use fixed chunking to avoid giant chunks
+            return self._create_chunks(text)
 
         chunks = []
         header_pattern = re.compile(r'^(#{1,6}\s+.+)$', re.MULTILINE)
@@ -159,12 +160,27 @@ class FileHandler:
                     chunks.append(current_chunk.strip())
                 current_chunk = section + "\n"
             else:
-                current_chunk += section
+                # Check if adding this section would exceed MAX_CHUNK_CHARS
+                if len(current_chunk) + len(section) > MAX_CHUNK_CHARS and current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                    current_chunk = section
+                else:
+                    current_chunk += section
         
         if current_chunk.strip():
             chunks.append(current_chunk.strip())
         
-        return chunks, "semantic"
+        # Safety: split any oversized chunks
+        final_chunks = []
+        for chunk in chunks:
+            if len(chunk) > MAX_CHUNK_CHARS:
+                # Use fixed chunking for oversized chunks
+                sub_chunks, _ = self._create_chunks(chunk)
+                final_chunks.extend(sub_chunks)
+            else:
+                final_chunks.append(chunk)
+        
+        return final_chunks, "semantic"
 
     def _create_chunks(self, text: str) -> Tuple[List[str], str]:
         if len(text) <= self.chunk_size:
@@ -184,9 +200,14 @@ class FileHandler:
         try:
             import pymupdf4llm
             md_text = pymupdf4llm.to_markdown(str(file_path))
+            if not md_text or not md_text.strip():
+                print(f"  [WARN] pymupdf4llm returned empty text for {file_path.name}")
+                return []
             pages = md_text.split("\n-----\n") 
-            return [{"page_num": i+1, "text": self._clean_text(p)} for i, p in enumerate(pages)]
-        except: return []
+            return [{"page_num": i+1, "text": self._clean_text(p)} for i, p in enumerate(pages) if p.strip()]
+        except Exception as e:
+            print(f"  [ERROR] pymupdf4llm extraction failed: {e}")
+            return []
 
     def _extract_docx_text(self, file_path: Path) -> List[Dict]:
         try:

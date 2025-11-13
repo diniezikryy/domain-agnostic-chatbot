@@ -47,15 +47,15 @@
     "my_policies_semantic": {
       "id": "my_policies_semantic",
       "name": "My Policies (Semantic Chunking)",
-      "description": "Test batch with semantic chunking",
+      "description": "Test batch with semantic chunking using critical illness documents",
       "doc_count": 3,
-      "chunk_count": 51,
-      "created_at": "2025-11-12T20:37:06.620364",
+      "chunk_count": 103,
+      "created_at": "2025-11-13T15:49:23.419657",
       "faiss_path": "batches/my_policies_semantic/faiss_index",
       "bm25_path": "batches/my_policies_semantic/bm25_index.pkl",
       "metadata_path": "batches/my_policies_semantic/metadata.json"
     }
   },
   "default_batch": "my_policies",
-  "last_modified": "2025-11-13T12:00:26.815764"
+  "last_modified": "2025-11-13T15:49:23.420651"
 }

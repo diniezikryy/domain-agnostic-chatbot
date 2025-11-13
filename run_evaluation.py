@@ -40,6 +40,7 @@ from langchain_openai import ChatOpenAI
 # Import your application classes
 from query_processor import QueryProcessor
 from batch_manager import BatchManager
+from utils.cache_manager import CacheManager
 
 
 MAX_CONTEXTS_FOR_RAGAS = int(os.getenv("MAX_CONTEXTS_FOR_RAGAS", "8"))
@@ -237,7 +238,9 @@ def run_retrieval_rerank(
         score = item.get('score') if isinstance(item, dict) and 'score' in item else None
         if idx is None:
             continue
-        rerank_info[int(idx)] = {"rerank_score": score, "rerank_rank": rank_pos}
+        # Convert numpy float32 to Python float for JSON serialization
+        score_value = float(score) if score is not None and hasattr(score, '__float__') else score
+        rerank_info[int(idx)] = {"rerank_score": score_value, "rerank_rank": rank_pos}
 
     # Attach rerank metadata to each chunk
     for i, chunk in enumerate(rag_chunks):
@@ -267,60 +270,243 @@ def run_retrieval_rerank(
     return retrieval_data
 
 
-def run_retrieval_hyde(
+def run_retrieval_grounded_hyde(
     query_processor: QueryProcessor,
     query: str,
     batch_id: str,
     user_profile: Optional[Dict]
 ) -> Dict[str, Any]:
-    """Experiment 3: Runs retrieval using HyDE (Hypothetical Document Embeddings)."""
-    print("--- [EVAL] Running Retrieval (HyDE) ---")
+    """Experiment 3: Runs retrieval using Grounded HyDE.
     
-    # 1. Generate Hypothetical Answer
-    hyde_prompt = f"""Write a short, hypothetical answer to the following question. 
-Do not say you don't know. Be specific and detailed.
+    Grounded HyDE fixes the hallucination problem of standard HyDE by:
+    1. First retrieving documents using the original query
+    2. Generating a hypothetical answer GROUNDED in those retrieved documents
+    3. Using that grounded answer for a second retrieval pass
+    
+    This prevents the LLM from inventing incorrect facts.
+    """
+    print("--- [EVAL] Running Retrieval (GROUNDED HyDE) ---")
+    
+    # STEP 1: Initial retrieval using original query
+    print("  Step 1: Initial retrieval with original query...")
+    initial_retrieval = query_processor.run_retrieval(
+        query=query,
+        batch_id=batch_id,
+        user_profile=user_profile,
+        skip_expansion=False,
+        top_k=RETRIEVAL_CANDIDATE_POOL,
+        allow_web_research=False,  # No web research for initial pass
+    )
+    
+    # Extract the top 5 chunks to ground the hypothetical answer
+    initial_chunks = initial_retrieval.get("rag_chunks_details", [])[:5]
+    if not initial_chunks:
+        print("  No initial chunks retrieved. Falling back to baseline retrieval.")
+        return initial_retrieval
+    
+    # Format the context from initial retrieval
+    context_parts = []
+    for i, chunk in enumerate(initial_chunks, 1):
+        content = chunk.get("content", "").strip()
+        metadata = chunk.get("metadata", {})
+        filename = metadata.get("filename", "Unknown")
+        page = metadata.get("page_number", "N/A")
+        context_parts.append(f"[Source {i}: {filename}, Page {page}]\n{content}")
+    
+    grounding_context = "\n\n---\n\n".join(context_parts)
+    
+    # STEP 2: Generate GROUNDED hypothetical answer
+    print("  Step 2: Generating grounded hypothetical answer...")
+    grounded_hyde_prompt = f"""Using ONLY the information provided in the documents below, write a short, factual answer to the question.
 
-Question: {query}"""
+DO NOT invent facts. DO NOT make assumptions. If the documents don't contain the answer, say so.
+
+DOCUMENTS:
+{grounding_context}
+
+QUESTION: {query}
+
+ANSWER:"""
     
     try:
         hyde_response = query_processor.client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": hyde_prompt}],
-            max_tokens=150,
+            messages=[{"role": "user", "content": grounded_hyde_prompt}],
+            max_tokens=200,
             temperature=0.0
         )
-        # Safely extract the text content
         hyde_answer = None
         if hasattr(hyde_response, 'choices') and hyde_response.choices:
             first_choice = hyde_response.choices[0]
-            # Some SDKs place content under .message.content, others under .text
             if hasattr(first_choice, 'message') and getattr(first_choice.message, 'content', None) is not None:
                 hyde_answer = first_choice.message.content
             elif getattr(first_choice, 'text', None) is not None:
                 hyde_answer = first_choice.text
     except Exception as e:
-        print(f"Warning: HyDE generation failed: {e}")
+        print(f"  Warning: Grounded HyDE generation failed: {e}")
         hyde_answer = None
-
-    if not hyde_answer or not isinstance(hyde_answer, str) or hyde_answer.strip() == "":
-        print("HyDE returned no usable answer; falling back to original query for retrieval.")
-        hyde_answer = query
-    else:
-        print(f"HyDE Answer: {hyde_answer[:100]}...")
     
-    # 2. Run retrieval using the hypothetical answer as query
-    # This leverages semantic search to find documents that match the hypothetical response
-    # Use HyDE answer for semantic retrieval but keep candidate pool size consistent
-    retrieval_data = query_processor.run_retrieval(
+    if not hyde_answer or not isinstance(hyde_answer, str) or hyde_answer.strip() == "":
+        print("  Grounded HyDE returned no answer. Using initial retrieval.")
+        # Attach hyde_answer (None or empty) for downstream callers to inspect
+        try:
+            initial_retrieval["hyde_answer"] = hyde_answer
+        except Exception:
+            pass
+        return initial_retrieval
+    
+    print(f"  Grounded HyDE Answer: {hyde_answer[:100]}...")
+    
+    # STEP 3: Second retrieval pass using the grounded hypothetical answer
+    print("  Step 3: Second retrieval pass with grounded answer...")
+    final_retrieval = query_processor.run_retrieval(
         query=str(hyde_answer),
         batch_id=batch_id,
         user_profile=user_profile,
-        skip_expansion=True,
+        skip_expansion=True,  # No expansion needed, HyDE answer is already detailed
         top_k=RETRIEVAL_CANDIDATE_POOL,
         allow_web_research=USE_WEB_RESEARCH,
     )
+
+    # Include the grounded HyDE answer in the returned retrieval data so callers
+    # (e.g., combined experiments) can re-use it for downstream steps like
+    # re-ranking or debugging.
+    try:
+        final_retrieval["hyde_answer"] = hyde_answer
+    except Exception:
+        pass
+
+    return final_retrieval
+
+
+def run_retrieval_combined_best(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Experiment: Combined Best - Uses Grounded HyDE followed by Re-ranking.
     
-    return retrieval_data
+    This combines the two most successful techniques:
+    - Grounded HyDE: Improves context recall and faithfulness
+    - Re-ranking: Improves context precision
+    
+    Flow:
+    1. Initial retrieval with original query
+    2. Generate grounded hypothetical answer from top chunks
+    3. Second retrieval pass using grounded answer (HyDE)
+    4. Re-rank the results from step 3
+    """
+    print("--- [EVAL] Running Retrieval (COMBINED BEST: Grounded HyDE + Re-ranking) ---")
+    
+    # STEP 1-3: Run Grounded HyDE to get improved retrieval results
+    print("  Phase 1: Running Grounded HyDE...")
+    hyde_retrieval = run_retrieval_grounded_hyde(query_processor, query, batch_id, user_profile)
+    
+    # STEP 4: Apply re-ranking to the HyDE results
+    print("  Phase 2: Applying re-ranking to HyDE results...")
+    rag_chunks = hyde_retrieval.get("rag_chunks_details", [])
+    
+    if not rag_chunks:
+        print("  No chunks from HyDE retrieval. Returning HyDE results as-is.")
+        return hyde_retrieval
+    
+    # Prefer re-ranking using the HyDE-grounded answer (if available). This keeps
+    # the reranker aligned with the retrieval signal that produced the candidate
+    # pool. Fall back to the original query if HyDE didn't produce an answer.
+    hyde_answer = hyde_retrieval.get("hyde_answer") if isinstance(hyde_retrieval, dict) else None
+    rerank_query = hyde_answer if hyde_answer else query
+    print(f"  Using rerank query: {'HyDE answer' if hyde_answer else 'original query'}")
+
+    passages = [{"id": i, "text": chunk.get("content", "")} for i, chunk in enumerate(rag_chunks)]
+    
+    try:
+        # If we have a HyDE answer, use a hybrid reranking strategy:
+        # - rerank with the HyDE answer AND the original query
+        # - combine the two rerank scores (weighted) to produce a final ranking
+        if hyde_answer:
+            try:
+                reranked_hyde = reranker_manager.rerank(hyde_answer, passages)
+                reranked_orig = reranker_manager.rerank(query, passages)
+                reranked_hyde_list = list(reranked_hyde)
+                reranked_orig_list = list(reranked_orig)
+            except Exception as e:
+                # If the dual call fails for any reason, fall back to single rerank
+                print(f"  Warning: Dual re-ranker call failed ({e}). Falling back to single rerank.")
+                reranked = reranker_manager.rerank(rerank_query, passages)
+                try:
+                    reranked_list = list(reranked)
+                except Exception:
+                    reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+            else:
+                # Build score maps (default missing scores to 0.0)
+                score_h = {
+                    int(item.get('id')): float(item.get('score')) if isinstance(item, dict) and item.get('score') is not None else 0.0
+                    for item in reranked_hyde_list if isinstance(item, dict) and item.get('id') is not None
+                }
+                score_o = {
+                    int(item.get('id')): float(item.get('score')) if isinstance(item, dict) and item.get('score') is not None else 0.0
+                    for item in reranked_orig_list if isinstance(item, dict) and item.get('id') is not None
+                }
+
+                # Combine scores using a weight (favor HyDE by default). Configurable via env var.
+                try:
+                    alpha = float(os.getenv("RERANK_HYDE_WEIGHT", "0.6"))
+                except Exception:
+                    alpha = 0.6
+
+                combined_scores = {}
+                for pid in set(list(score_h.keys()) + list(score_o.keys())):
+                    combined_scores[pid] = alpha * score_h.get(pid, 0.0) + (1.0 - alpha) * score_o.get(pid, 0.0)
+
+                # Create a reranked list sorted by combined score (desc)
+                reranked_list = [
+                    {"id": pid, "score": combined_scores[pid]}
+                    for pid in sorted(combined_scores.keys(), key=lambda x: combined_scores[x], reverse=True)
+                ]
+        else:
+            reranked = reranker_manager.rerank(rerank_query, passages)
+            try:
+                reranked_list = list(reranked)
+            except Exception:
+                reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+    except Exception as e:
+        print(f"  Warning: Re-ranker failed ({e}). Skipping re-ranking.")
+        return hyde_retrieval
+    
+    # Map rerank info back to chunks
+    rerank_info = {}
+    for rank_pos, item in enumerate(reranked_list, start=1):
+        idx = item.get('id') if isinstance(item, dict) else None
+        score = item.get('score') if isinstance(item, dict) and 'score' in item else None
+        if idx is None:
+            continue
+        score_value = float(score) if score is not None and hasattr(score, '__float__') else score
+        rerank_info[int(idx)] = {"rerank_score": score_value, "rerank_rank": rank_pos}
+    
+    # Attach rerank metadata
+    for i, chunk in enumerate(rag_chunks):
+        info = rerank_info.get(i, {})
+        chunk['rerank_score'] = info.get('rerank_score')
+        chunk['rerank_rank'] = info.get('rerank_rank')
+    
+    # Keep top-k reranked chunks
+    keep_n = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else 5
+    if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0:
+        keep_n = min(keep_n, RERANK_KEEP_TOP_N)
+    
+    top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
+    reranked_indices = {int(i) for i in top_ids if i is not None}
+    
+    final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
+    
+    # Update retrieval data
+    hyde_retrieval["rag_chunks_details"] = final_rag_chunks
+    hyde_retrieval["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
+    hyde_retrieval["rerank_info"] = rerank_info
+    
+    print(f"  Combined Best: Grounded HyDE retrieved {len(rag_chunks)} chunks, re-ranked to {len(final_rag_chunks)} chunks.")
+    return hyde_retrieval
 
 
 # =========================================================================
@@ -331,15 +517,23 @@ def run_pipeline(
     questions_data: List[Dict],
     profiles_data: Dict,
     experiment_name: str,
-    test_batch_id: str
+    test_batch_id: str,
+    cache_manager: Optional[CacheManager] = None
 ) -> List[Dict]:
     """
     Runs the RAG pipeline for all test questions and collects results
     based on the specified experiment.
+    
+    Args:
+        cache_manager: Optional cache manager for caching pipeline results
     """
     print(f"\n{'='*70}")
     print(f"Initializing RAG pipeline for experiment: {experiment_name.upper()}")
     print(f"Test batch: {test_batch_id}")
+    if cache_manager:
+        print("Cache: ENABLED")
+    else:
+        print("Cache: DISABLED")
     print(f"{'='*70}\n")
     
     batch_manager = BatchManager()
@@ -362,8 +556,11 @@ def run_pipeline(
     elif experiment_name == "reranking":
         retrieval_func = run_retrieval_rerank
         generation_func = run_generation_baseline
-    elif experiment_name == "hyde":
-        retrieval_func = run_retrieval_hyde
+    elif experiment_name == "grounded_hyde":
+        retrieval_func = run_retrieval_grounded_hyde
+        generation_func = run_generation_baseline
+    elif experiment_name == "combined_best":
+        retrieval_func = run_retrieval_combined_best
         generation_func = run_generation_baseline
     elif experiment_name == "semantic_chunking":
         retrieval_func = run_retrieval_semantic_chunking
@@ -383,61 +580,91 @@ def run_pipeline(
         print(f"\n--- Processing Question: {question_id} ---")
         print(f"Q: {question}")
         
-        try:
-            # 1. Run Retrieval
-            retrieval_data = retrieval_func(query_processor, question, test_batch_id, user_profile)
-
-            # Trim contexts to avoid oversized evaluation prompts
-            rag_contexts = retrieval_data["rag_contexts_list"][:MAX_CONTEXTS_FOR_RAGAS]
-            web_contexts = retrieval_data["web_contexts_list"][:max(0, MAX_CONTEXTS_FOR_RAGAS - len(rag_contexts))]
-
-            retrieval_data["rag_contexts_list"] = rag_contexts
-            retrieval_data["rag_chunks_details"] = retrieval_data["rag_chunks_details"][:MAX_CONTEXTS_FOR_RAGAS]
-            retrieval_data["web_contexts_list"] = web_contexts
-
-            # Collate all contexts for RAGAS
-            all_contexts = rag_contexts + web_contexts
-
-            # For no_rag experiment, explicitly set contexts to empty
-            if experiment_name == "no_rag":
-                all_contexts = []
-
-            if not all_contexts:
-                print("[Warning] No context was retrieved.")
-                # RAGAS requires at least one context (even if empty string) to avoid validation errors
-                all_contexts = [""]
-            else:
-                print(f"[OK] Retrieved {len(all_contexts)} context chunks.")
-            
-            # 2. Run Generation
-            generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
-            print(f"A: {generated_answer[:100]}...")
-            
-            # 3. Store results for RAGAS and include retrieval metadata (rerank scores etc.)
-            # Ensure any mapping-like fields use string keys so pyarrow/datasets can
-            # serialize them reliably (pyarrow requires dict keys to be str/bytes).
-            raw_rerank_info = retrieval_data.get("rerank_info", {}) or {}
-            safe_rerank_info = {str(k): v for k, v in raw_rerank_info.items()}
-
-            results.append({
-                "question": question,
-                "answer": generated_answer,
-                "contexts": all_contexts,
-                "ground_truth": ground_truth,
-                "question_id": question_id,
-                # include detailed retrieval info for debugging/analysis
-                "rag_chunks": retrieval_data.get("rag_chunks_details", []),
-                "rag_contexts": retrieval_data.get("rag_contexts_list", []),
-                "web_research": retrieval_data.get("web_research_raw", {}),
-                "rerank_info": safe_rerank_info,
-            })
+        # Check cache first
+        cached_result = None
+        if cache_manager:
+            cached_result = cache_manager.get(
+                question=question,
+                batch_id=test_batch_id,
+                experiment_name=experiment_name,
+                user_profile_id=profile_id
+            )
         
-        except Exception as e:
-            print(f"[Error] Error processing question: {e}")
-            import traceback
-            traceback.print_exc()
-            # Continue to next question
-            continue
+        if cached_result:
+            # Use cached data
+            retrieval_data = cached_result["retrieval_data"]
+            generated_answer = cached_result["generated_answer"]
+            print(f"[Using cached result]")
+        else:
+            # Run the pipeline
+            try:
+                # 1. Run Retrieval
+                retrieval_data = retrieval_func(query_processor, question, test_batch_id, user_profile)
+                
+                # 2. Run Generation
+                generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
+                print(f"A: {generated_answer[:100]}...")
+                
+                # Save to cache
+                if cache_manager:
+                    cache_manager.put(
+                        question=question,
+                        batch_id=test_batch_id,
+                        experiment_name=experiment_name,
+                        retrieval_data=retrieval_data,
+                        generated_answer=generated_answer,
+                        user_profile_id=profile_id,
+                        metadata={"question_id": question_id}
+                    )
+            
+            except Exception as e:
+                print(f"[Error] Error processing question: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue to next question
+                continue
+        
+        # Trim contexts to avoid oversized evaluation prompts
+        rag_contexts = retrieval_data["rag_contexts_list"][:MAX_CONTEXTS_FOR_RAGAS]
+        web_contexts = retrieval_data["web_contexts_list"][:max(0, MAX_CONTEXTS_FOR_RAGAS - len(rag_contexts))]
+
+        retrieval_data["rag_contexts_list"] = rag_contexts
+        retrieval_data["rag_chunks_details"] = retrieval_data["rag_chunks_details"][:MAX_CONTEXTS_FOR_RAGAS]
+        retrieval_data["web_contexts_list"] = web_contexts
+
+        # Collate all contexts for RAGAS
+        all_contexts = rag_contexts + web_contexts
+
+        # For no_rag experiment, explicitly set contexts to empty
+        if experiment_name == "no_rag":
+            all_contexts = []
+
+        if not all_contexts:
+            print("[Warning] No context was retrieved.")
+            # RAGAS requires at least one context (even if empty string) to avoid validation errors
+            all_contexts = [""]
+        else:
+            print(f"[OK] Retrieved {len(all_contexts)} context chunks.")
+        
+        # 3. Store results for RAGAS and include retrieval metadata (rerank scores etc.)
+        # Ensure any mapping-like fields use string keys so pyarrow/datasets can
+        # serialize them reliably (pyarrow requires dict keys to be str/bytes).
+        raw_rerank_info = retrieval_data.get("rerank_info", {}) or {}
+        safe_rerank_info = {str(k): v for k, v in raw_rerank_info.items()}
+
+        results.append({
+            "question": question,
+            "answer": generated_answer,
+            "contexts": all_contexts,
+            "ground_truth": ground_truth,
+            "question_id": question_id,
+            "user_profile_id": profile_id,  # Add user_profile_id for RAGAS caching
+            # include detailed retrieval info for debugging/analysis
+            "rag_chunks": retrieval_data.get("rag_chunks_details", []),
+            "rag_contexts": retrieval_data.get("rag_contexts_list", []),
+            "web_research": retrieval_data.get("web_research_raw", {}),
+            "rerank_info": safe_rerank_info,
+        })
     
     return results
 
@@ -608,16 +835,107 @@ def save_local_metrics_csv(
     print(f"[OK] Local metrics saved to: {output_path}")
     return str(output_path)
 
-def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: str) -> Any:
+def check_cached_ragas_metrics(
+    results: List[Dict],
+    cache_manager: Optional[CacheManager],
+    experiment_name: str,
+    batch_id: str
+) -> Optional[Dict[str, List[float]]]:
+    """Check if all questions have cached RAGAS metrics.
+    
+    Returns:
+        Dict mapping metric names to lists of scores if all cached, None otherwise
+    """
+    if not cache_manager:
+        return None
+    
+    # Check if all questions have cached RAGAS metrics
+    all_cached = True
+    cached_metrics = {
+        'faithfulness': [],
+        'answer_relevancy': [],
+        'context_precision': [],
+        'context_recall': [],
+        'answer_correctness': []
+    }
+    
+    for result in results:
+        question = result.get('question')
+        question_id = result.get('question_id')
+        user_profile_id = result.get('user_profile_id')  # May not exist in result dict
+        
+        # Try to get RAGAS metrics from cache
+        metrics = cache_manager.get_ragas_metrics(
+            question=question,
+            batch_id=batch_id,
+            experiment_name=experiment_name,
+            user_profile_id=user_profile_id
+        )
+        
+        if metrics:
+            # Add metrics to our collection
+            for metric_name in cached_metrics.keys():
+                cached_metrics[metric_name].append(metrics.get(metric_name, 0.0))
+        else:
+            all_cached = False
+            break
+    
+    if all_cached:
+        print(f"[Cache HIT] All {len(results)} questions have cached RAGAS metrics!")
+        return cached_metrics
+    else:
+        print(f"[Cache MISS] RAGAS metrics not fully cached, will compute...")
+        return None
+
+
+def run_ragas_evaluation(
+    results: List[Dict],
+    experiment_name: str,
+    batch_id: str,
+    cache_manager: Optional[CacheManager] = None
+) -> Any:
     """Runs RAGAS metrics on the collected results with validation and retries.
 
     This wrapper will attempt evaluate() up to 3 times and validate the returned
     DataFrame to ensure expected metric columns exist and are not all-NaN.
     On repeated failures it writes a debug artifact to `evaluation/results/` and returns {}.
+    
+    Args:
+        cache_manager: Optional cache manager for caching RAGAS metrics
     """
     print(f"\n{'='*70}")
     print("Running RAGAS Evaluation Metrics (safe wrapper)...")
     print(f"{'='*70}\n")
+    
+    # Check if all RAGAS metrics are cached
+    cached_metrics = check_cached_ragas_metrics(results, cache_manager, experiment_name, batch_id)
+    if cached_metrics:
+        # Build a mock evaluation result using cached metrics
+        print("RAGAS evaluation completed (from cache) and validated.\n")
+        
+        # Create a DataFrame-like structure that matches what evaluate() returns
+        import pandas as pd
+        df_data = {
+            'user_input': [r['question'] for r in results],
+            'retrieved_contexts': [r['contexts'] for r in results],
+            'response': [r['answer'] for r in results],
+            'reference': [r['ground_truth'] for r in results],
+            'faithfulness': cached_metrics['faithfulness'],
+            'answer_relevancy': cached_metrics['answer_relevancy'],
+            'context_precision': cached_metrics['context_precision'],
+            'context_recall': cached_metrics['context_recall'],
+            'answer_correctness': cached_metrics['answer_correctness']
+        }
+        
+        # Create a mock evaluation result object
+        class MockEvaluationResult:
+            def __init__(self, df):
+                self._df = df
+            
+            def to_pandas(self):
+                return self._df
+        
+        return MockEvaluationResult(pd.DataFrame(df_data))
 
     if not results:
         print("ERROR: No results to evaluate!")
@@ -678,6 +996,40 @@ def run_ragas_evaluation(results: List[Dict], experiment_name: str, batch_id: st
 
             # Passed validation
             print("RAGAS evaluation completed and validated.")
+            
+            # Save RAGAS metrics to cache for each question
+            if cache_manager:
+                print("Saving RAGAS metrics to cache...")
+                import pandas as pd
+                for i, result in enumerate(results):
+                    question = result.get('question')
+                    # Try to get user_profile_id from different possible locations
+                    user_profile_id = None
+                    # First check if it's in the question data (from test_data)
+                    for q_data in [r for r in results if r.get('question') == question]:
+                        if 'user_profile_id' in q_data:
+                            user_profile_id = q_data['user_profile_id']
+                            break
+                    
+                    # Extract metrics for this question from the DataFrame
+                    ragas_metrics = {
+                        'faithfulness': float(df.iloc[i]['faithfulness']) if pd.notna(df.iloc[i]['faithfulness']) else 0.0,
+                        'answer_relevancy': float(df.iloc[i]['answer_relevancy']) if pd.notna(df.iloc[i]['answer_relevancy']) else 0.0,
+                        'context_precision': float(df.iloc[i]['context_precision']) if pd.notna(df.iloc[i]['context_precision']) else 0.0,
+                        'context_recall': float(df.iloc[i]['context_recall']) if pd.notna(df.iloc[i]['context_recall']) else 0.0,
+                        'answer_correctness': float(df.iloc[i]['answer_correctness']) if pd.notna(df.iloc[i]['answer_correctness']) else 0.0
+                    }
+                    
+                    # Update cache entry with RAGAS metrics
+                    cache_manager.update_ragas_metrics(
+                        question=question,
+                        batch_id=batch_id,
+                        experiment_name=experiment_name,
+                        ragas_metrics=ragas_metrics,
+                        user_profile_id=user_profile_id
+                    )
+                print(f"[Cache] Saved RAGAS metrics for {len(results)} questions.")
+            
             return evaluation_result
 
         except Exception as e:
@@ -920,7 +1272,7 @@ def main():
 Examples:
   python run_evaluation.py --experiment baseline
   python run_evaluation.py --experiment reranking --batch_id my_policies
-  python run_evaluation.py --experiment hyde --batch_id my_policies_large
+  python run_evaluation.py --experiment grounded_hyde --batch_id my_policies_large
   python run_evaluation.py --experiment no_rag --batch_id my_policies
         """
     )
@@ -929,7 +1281,7 @@ Examples:
         "--experiment",
         type=str,
         default="baseline",
-        choices=["baseline", "no_rag", "reranking", "hyde", "semantic_chunking"],
+        choices=["baseline", "no_rag", "reranking", "grounded_hyde", "combined_best", "semantic_chunking"],
         help="The experiment to run (default: baseline)"
     )
     parser.add_argument(
@@ -943,6 +1295,22 @@ Examples:
         type=int,
         default=None,
         help="Override the default number of top reranked chunks to keep (env RERANK_KEEP_TOP_N or default 5)"
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable caching (force fresh pipeline runs)"
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear cache before running evaluation"
+    )
+    parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=None,
+        help="Cache TTL in hours (default: never expire)"
     )
     parser.add_argument(
         "--skip_ragas",
@@ -988,11 +1356,22 @@ Examples:
         except Exception:
             print(f"Invalid --rerank_keep_n value: {args.rerank_keep_n}; using default {RERANK_KEEP_TOP_N}")
     
+    # Initialize cache manager
+    cache_manager = None
+    if not args.no_cache:
+        cache_manager = CacheManager(ttl_hours=args.cache_ttl)
+        if args.clear_cache:
+            print("[Cache] Clearing cache...")
+            cache_manager.clear(experiment_name=args.experiment, batch_id=args.batch_id)
+        print(f"[Cache] Initialized (TTL: {args.cache_ttl or 'never expire'})")
+    else:
+        print("[Cache] Disabled by --no-cache flag")
+    
     # Load data
     questions, profiles = load_data()
     
     # Run pipeline
-    pipeline_results = run_pipeline(questions, profiles, args.experiment, args.batch_id)
+    pipeline_results = run_pipeline(questions, profiles, args.experiment, args.batch_id, cache_manager)
 
     # Compute lightweight local metrics before making evaluator calls
     local_metrics = compute_local_support_metrics(pipeline_results)
@@ -1002,13 +1381,17 @@ Examples:
         print("\n[Info] Skipping RAGAS evaluation as requested (--skip_ragas).")
         evaluation_result = {}
     else:
-        evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id)
+        evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id, cache_manager)
     
     # Print and save results
     print_metrics_summary(evaluation_result, pipeline_results, args.experiment, show_table=args.show_table)
     print_local_metrics_summary(local_metrics)
     output_file = save_results(evaluation_result, pipeline_results, args.experiment, args.batch_id, local_metrics)
     save_local_metrics_csv(local_metrics, args.experiment, args.batch_id)
+    
+    # Print cache statistics
+    if cache_manager:
+        cache_manager.print_stats()
     
     print(f"\n[OK] Evaluation complete!")
     print(f"Output: {output_file}")

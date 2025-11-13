@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import time
 from typing import List
 import numpy as np
 
@@ -38,7 +39,7 @@ class EmbeddingGenerator:
             print(f"Error initializing OpenAI client: {e}")
 
     def generate_embeddings(self, texts: List[str], batch_size: int = 100) -> List[np.ndarray]:
-        """Generate embeddings for a list of texts."""
+        """Generate embeddings for a list of texts with rate limiting."""
         if not self.client:
             print("OpenAI client not available")
             return []
@@ -52,13 +53,39 @@ class EmbeddingGenerator:
 
                 print(f"Generating embeddings for batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
 
-                response = self.client.embeddings.create(
-                    model=self.model_name,
-                    input=batch # We assume the input is already clean
-                )
+                # Retry logic with exponential backoff for rate limit errors
+                max_retries = 5
+                retry_delay = 1  # Start with 1 second
+                
+                for retry in range(max_retries):
+                    try:
+                        response = self.client.embeddings.create(
+                            model=self.model_name,
+                            input=batch # We assume the input is already clean
+                        )
 
-                batch_embeddings = [np.array(data.embedding) for data in response.data]
-                embeddings.extend(batch_embeddings)
+                        batch_embeddings = [np.array(data.embedding) for data in response.data]
+                        embeddings.extend(batch_embeddings)
+                        
+                        # Add a small delay between batches to avoid rate limits
+                        if i + batch_size < len(texts):
+                            time.sleep(0.5)
+                        
+                        break  # Success, exit retry loop
+                        
+                    except Exception as e:
+                        error_str = str(e)
+                        if "429" in error_str or "rate_limit" in error_str.lower():
+                            if retry < max_retries - 1:
+                                print(f"  Rate limit hit. Retrying in {retry_delay}s... (attempt {retry + 1}/{max_retries})")
+                                time.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                            else:
+                                print(f"  Rate limit exceeded after {max_retries} retries. Skipping batch.")
+                                raise
+                        else:
+                            # Non-rate-limit error, raise immediately
+                            raise
 
             print(f"Generated {len(embeddings)} embeddings")
             return embeddings
