@@ -1,0 +1,30 @@
+[
+  {
+    "question_id": "DINIE_001_ASTHMA_EVAC",
+    "question": "Dinie currently has a history of asthma dating back to age 10. Given that his GREAT TravelCare Platinum policy includes the Pre-Existing Conditions Add-on, what is the maximum coverage amount available for Emergency Medical Evacuation related to this pre-existing condition?",
+    "ground_truth": "With the Pre-Existing Conditions Add-on enabled under GREAT TravelCare Platinum, Emergency Medical Evacuation for asthma (a pre-existing condition) is covered up to S$200,000.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "TravelCare pre-existing condition add-on coverage"
+  },
+  {
+    "question_id": "DINIE_002_TPD_ADLS",
+    "question": "Dinie's Manulife policy lists Total and Permanent Disability (TPD) coverage definitions. Describe the specific trigger criteria that would allow him to claim TPD benefits at age 40 (policy active and under age 65), focusing on the Activities of Daily Living (ADLs) requirements.",
+    "ground_truth": "To claim TPD benefits before age 65, Dinie must, due to accident, illness, or disease, become totally and permanently unable to perform at least 3 of the 6 Activities of Daily Living for a continuous period of at least 6 months and must require the physical assistance of another person throughout each activity.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Manulife TPD trigger (ADL-based)"
+  },
+  {
+    "question_id": "DINIE_003_SUPREME_DEDUCTIBLE",
+    "question": "Dinie's GREAT SupremeHealth plan (P PLUS) covers hospitalization. What deductible and co-insurance must he pay if he is hospitalized in a Restructured Hospital's Class A ward next year when his age next birthday is 23?",
+    "ground_truth": "For a Restructured Hospital Ward A at age next birthday 23, Dinie must pay a deductible of S$3,500 per period of insurance and 10% co-insurance on the remaining eligible expenses.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "SupremeHealth deductible + co-insurance"
+  },
+  {
+    "question_id": "DINIE_004_COVERAGE_GAPS",
+    "question": "Dinie is concerned about gaps in his portfolio. Identify the top two recommended actions listed in the coverage analysis and specify the exact coverage gap each addresses.",
+    "ground_truth": "1) Recommendation: Consider an early critical illness rider or standalone plan to address the gap that early-stage critical illnesses are not covered. 2) Recommendation: Consider personal accident insurance (AccidentCare) for daily accident protection to address the gap that accident-specific coverage is currently limited to travel-only benefits.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Coverage gap remediation recommendations"
+  }
+]

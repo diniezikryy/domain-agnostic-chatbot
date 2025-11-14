@@ -52,6 +52,7 @@ These environment variables are used by the harness to make experiments determin
 - `RERANK_KEEP_TOP_N` — when re-ranking is enabled, how many top chunks to keep for generation
 - `GENERATION_TOP_K` — how many contexts the generator receives (defaults to the RAG budget)
 - `MAX_CONTEXTS_FOR_RAGAS` — number of contexts passed to RAGAS for evaluation (keeps the evaluator stable)
+- `ENABLE_TPM_THROTTLE` — set to `1` if you want the harness to insert fixed sleeps between questions; leave unset for the new default (retry-driven, no artificial delay).
 
 Set these in PowerShell (example):
 

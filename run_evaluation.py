@@ -17,10 +17,10 @@ import sys
 import argparse
 import time
 import re
-import csv
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 
@@ -61,6 +61,62 @@ RERANK_KEEP_TOP_N = int(os.getenv("RERANK_KEEP_TOP_N", str(GENERATION_TOP_K)))
 RETRIEVAL_CANDIDATE_POOL = int(os.getenv("RETRIEVAL_CANDIDATE_POOL", "50"))
 USE_WEB_RESEARCH = os.getenv("USE_WEB_RESEARCH", "false").lower() in ("1", "true", "yes")
 
+ENABLE_TPM_THROTTLE = os.getenv("ENABLE_TPM_THROTTLE", "false").lower() in ("1", "true", "yes")
+
+EXPERIMENT_CHOICES = [
+    "baseline",
+    "no_rag",
+    "reranking",
+    "grounded_hyde",
+    "combined_best",
+    "semantic_chunking",
+]
+
+
+def _chunk_unique_key(chunk: Dict[str, Any]) -> str:
+    metadata = chunk.get("metadata") or {}
+    chunk_id = metadata.get("chunk_id")
+    if chunk_id:
+        return f"id:{chunk_id}"
+    filename = metadata.get("filename")
+    page = metadata.get("page_number")
+    if filename or page is not None:
+        return f"file:{filename or 'unknown'}|page:{page}"
+    content = chunk.get("content", "")
+    if content:
+        return content[:256]
+    return str(id(chunk))
+
+
+def _merge_chunk_lists(
+    primary: List[Dict[str, Any]],
+    fallback: List[Dict[str, Any]],
+    max_chunks: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    seen = set()
+
+    def _add_chunk(chunk: Dict[str, Any]) -> None:
+        if not chunk:
+            return
+        key = _chunk_unique_key(chunk)
+        if key in seen:
+            return
+        seen.add(key)
+        merged.append(chunk)
+
+    for chunk in primary or []:
+        if max_chunks is not None and len(merged) >= max_chunks:
+            return merged
+        _add_chunk(chunk)
+
+    for chunk in fallback or []:
+        if max_chunks is not None and len(merged) >= max_chunks:
+            break
+        _add_chunk(chunk)
+
+    return merged
+
 
 # Simple manager to encapsulate FlashRank initialization and calls.
 # This replaces the previous pattern of attaching the reranker to the function
@@ -100,7 +156,7 @@ reranker_manager = RerankerManager()
 # CONFIGURATION
 # =========================================================================
 
-EVAL_DATASET_PATH = "test_data/evaluation_dataset.json"
+EVAL_DATASET_PATH = "test_data/evaluation_dataset_auto_ragas.json"
 TEST_PROFILES_DIR = "test_data"
 
 # IMPORTANT: Update this to match your test user's batch_id
@@ -186,11 +242,20 @@ def run_generation_no_rag(
 ) -> str:
     """Experiment 1: Runs generation with NO RAG context."""
     print("--- [EVAL] Running Generation (NO_RAG) ---")
-    # Pass empty contexts to force LLM-only response
+    # Provide the generator with the full-document contexts returned by
+    # the retrieval stage (if any). This keeps the behavior "no RAG"
+    # (no FAISS/BM25/re-ranking), but still allows the LLM to read the
+    # user's documents and profile for grounded answers.
+    rag_chunks = []
+    research_results = {}
+    if retrieval_data:
+        rag_chunks = retrieval_data.get("rag_chunks_details", []) or []
+        research_results = retrieval_data.get("web_research_raw", {}) or {}
+
     return query_processor.run_generation(
         query=query,
-        rag_chunks=[],
-        research_results={},
+        rag_chunks=rag_chunks,
+        research_results=research_results,
         user_profile=user_profile
     )
 
@@ -263,6 +328,9 @@ def run_retrieval_rerank(
 
     final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
 
+    generation_limit = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else None
+    final_rag_chunks = _merge_chunk_lists(final_rag_chunks, rag_chunks, max_chunks=generation_limit)
+
     # Update retrieval data with reranked chunks and provide rerank_info for debugging/analysis
     retrieval_data["rag_chunks_details"] = final_rag_chunks
     retrieval_data["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
@@ -270,6 +338,124 @@ def run_retrieval_rerank(
 
     print(f"Re-ranked from {len(rag_chunks)} to {len(final_rag_chunks)} chunks. (keep_n={keep_n})")
     return retrieval_data
+
+
+def run_retrieval_docs_full(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Return whole-document texts (no chunking/retrieval) so generation can use raw docs.
+
+    This is intended for the `no_rag` experiment where the generator should be
+    able to read the documents but we do NOT perform indexing, chunking,
+    BM25/FAISS retrieval or re-ranking. Each document is provided as a single
+    context entry (one string per document).
+    """
+    print("--- [EVAL] Running Retrieval (WHOLE DOCUMENTS, NO RAG) ---")
+
+    # Locate batch metadata to find the source document paths
+    try:
+        paths = query_processor.batch_manager.get_batch_paths(batch_id)
+        meta_path = paths.get("metadata") if paths else None
+    except Exception:
+        meta_path = None
+
+    docs = []
+    if meta_path and Path(meta_path).exists():
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+            doc_entries = meta.get('documents', [])
+        except Exception:
+            doc_entries = []
+    else:
+        doc_entries = []
+
+    # If no metadata, try a few fallbacks: batches/<batch_id>/ documents or documents/<batch_id>
+    if not doc_entries:
+        fallback_dir = Path('batches') / batch_id
+        if fallback_dir.exists():
+            # collect any files in the batch dir
+            for p in fallback_dir.glob('*'):
+                if p.is_file() and p.suffix.lower() in ['.pdf', '.docx', '.txt', '.md']:
+                    doc_entries.append({'filename': p.name, 'file_path': str(p)})
+
+    if not doc_entries:
+        # Last resort: look in documents/<batch_id> or documents
+        docs_dir = Path('documents') / batch_id
+        if docs_dir.exists():
+            for p in docs_dir.glob('*'):
+                if p.is_file() and p.suffix.lower() in ['.pdf', '.docx', '.txt', '.md']:
+                    doc_entries.append({'filename': p.name, 'file_path': str(p)})
+
+    file_handler = None
+    try:
+        from utils.file_handlers import FileHandler
+        file_handler = FileHandler()
+    except Exception:
+        file_handler = None
+
+    rag_chunks_details = []
+    rag_contexts_list = []
+
+    for entry in doc_entries:
+        fp = entry.get('file_path') or entry.get('filename')
+        if not fp:
+            continue
+        p = Path(fp)
+        # Try a few candidate locations if the path is not absolute / not found
+        candidates = [p]
+        if not p.exists():
+            candidates.insert(0, Path('batches') / batch_id / p.name)
+            candidates.insert(0, Path('documents') / p.name)
+
+        doc_path = None
+        for c in candidates:
+            if c.exists():
+                doc_path = c
+                break
+
+        if not doc_path:
+            print(f"  [WARN] Document not found for entry: {entry}")
+            continue
+
+        # Extract text
+        text = None
+        try:
+            if file_handler:
+                chunks, _ = file_handler.process_document(str(doc_path), chunking_strategy='page')
+                if chunks:
+                    text = "\n\n".join(chunks)
+            if not text:
+                # Fallback to simple read for text files
+                if doc_path.suffix.lower() in ['.txt', '.md']:
+                    text = doc_path.read_text(encoding='utf-8')
+                else:
+                    # As a last resort, set a placeholder
+                    text = f"[Full document not extractable: {doc_path.name}]"
+        except Exception as e:
+            print(f"  [WARN] Failed to extract {doc_path}: {e}")
+            text = f"[Error extracting document: {doc_path.name}]"
+
+        # Prepare single-entry chunk for the whole document
+        metadata = {
+            'source': str(doc_path),
+            'filename': doc_path.name,
+            'file_type': doc_path.suffix.lower(),
+            'chunking_strategy': 'whole_document'
+        }
+        rag_chunks_details.append({'content': text, 'metadata': metadata})
+        rag_contexts_list.append(text)
+
+    return {
+        'rag_chunks_details': rag_chunks_details,
+        'rag_contexts_list': rag_contexts_list,
+        'web_contexts_list': [],
+        'web_research_raw': {},
+        'rerank_info': {}
+    }
 
 
 def run_retrieval_grounded_hyde(
@@ -377,6 +563,15 @@ ANSWER:"""
         final_retrieval["hyde_answer"] = hyde_answer
     except Exception:
         pass
+
+    # Keep any high-quality chunks from the initial retrieval so we don't lose signals
+    merged_chunks = _merge_chunk_lists(
+        final_retrieval.get("rag_chunks_details", []),
+        initial_retrieval.get("rag_chunks_details", []),
+        max_chunks=RETRIEVAL_CANDIDATE_POOL if isinstance(RETRIEVAL_CANDIDATE_POOL, int) and RETRIEVAL_CANDIDATE_POOL > 0 else None
+    )
+    final_retrieval["rag_chunks_details"] = merged_chunks
+    final_retrieval["rag_contexts_list"] = [chunk.get("content", "") for chunk in merged_chunks]
 
     return final_retrieval
 
@@ -501,7 +696,9 @@ def run_retrieval_combined_best(
     reranked_indices = {int(i) for i in top_ids if i is not None}
     
     final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
-    
+    generation_limit = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else None
+    final_rag_chunks = _merge_chunk_lists(final_rag_chunks, rag_chunks, max_chunks=generation_limit)
+
     # Update retrieval data
     hyde_retrieval["rag_chunks_details"] = final_rag_chunks
     hyde_retrieval["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
@@ -543,22 +740,34 @@ def run_pipeline(
     query_processor = QueryProcessor(batch_manager)
     
     # Verify the batch exists
-    if not query_processor._ensure_batch_loaded(test_batch_id):
-        raise Exception(f"FATAL: Could not load batch '{test_batch_id}'. "
-                       f"Please ensure the batch exists in batches/{test_batch_id}/")
-    
-    print(f"[OK] Successfully loaded test batch '{test_batch_id}'.\n")
+    # For the `no_rag` experiment we intentionally avoid loading the FAISS/BM25
+    # indexes because we will read the raw documents directly. Skip the
+    # heavy index load in that case to reduce startup cost.
+    if experiment_name != "no_rag":
+        if not query_processor._ensure_batch_loaded(test_batch_id):
+            raise Exception(f"FATAL: Could not load batch '{test_batch_id}'. "
+                           f"Please ensure the batch exists in batches/{test_batch_id}/")
+        print(f"[OK] Successfully loaded test batch '{test_batch_id}'.\n")
+    else:
+        print(f"[NO_RAG] Skipping FAISS/BM25 index load for batch '{test_batch_id}' (using full docs).")
 
-    throttle_delay = compute_safe_delay()
-    if throttle_delay > 0:
-        print(f"Throttling between questions by {throttle_delay:.2f}s to stay within the TPM budget.")
+    if ENABLE_TPM_THROTTLE:
+        throttle_delay = compute_safe_delay()
+        if throttle_delay > 0:
+            print(f"Throttling between questions by {throttle_delay:.2f}s to stay within the TPM budget.")
+    else:
+        throttle_delay = 0
+        print("[TPM] Throttling disabled by default. Set ENABLE_TPM_THROTTLE=1 to re-enable fixed delays.")
     
     # Select the functions to run based on the experiment
     if experiment_name == "baseline":
         retrieval_func = run_retrieval_baseline
         generation_func = run_generation_baseline
     elif experiment_name == "no_rag":
-        retrieval_func = run_retrieval_baseline
+        # For no_rag we provide the generator with the full documents (no chunking
+        # / indexing). The generator will still run, but retrieval is a simple
+        # document loader rather than a search over FAISS/BM25.
+        retrieval_func = run_retrieval_docs_full
         generation_func = run_generation_no_rag
     elif experiment_name == "reranking":
         retrieval_func = run_retrieval_rerank
@@ -600,13 +809,17 @@ def run_pipeline(
         
         retrieval_seconds = 0.0
         generation_seconds = 0.0
+        cache_key = None
+        from_cache = False
         if cached_result:
             # Use cached data
             retrieval_data = cached_result["retrieval_data"]
             generated_answer = cached_result["generated_answer"]
             retrieval_seconds = cached_result.get("retrieval_seconds", 0.0)
             generation_seconds = cached_result.get("generation_seconds", 0.0)
-            print(f"[Using cached result]")
+            cache_key = cached_result.get("_cache_key")
+            from_cache = True
+            print(f"[Using cached result] key={cache_key[:8] if cache_key else 'NA'}")
         else:
             # Run the pipeline
             try:
@@ -630,7 +843,9 @@ def run_pipeline(
                         retrieval_data=retrieval_data,
                         generated_answer=generated_answer,
                         user_profile_id=profile_id,
-                        metadata={"question_id": question_id}
+                        metadata={"question_id": question_id},
+                        retrieval_seconds=retrieval_seconds,
+                        generation_seconds=generation_seconds,
                     )
             
             except Exception as e:
@@ -684,6 +899,8 @@ def run_pipeline(
             "latency_seconds": question_latency,
             "retrieval_seconds": retrieval_seconds,
             "generation_seconds": generation_seconds,
+            "from_cache": from_cache,
+            "cache_key": cache_key,
         })
 
         if throttle_delay > 0:
@@ -770,11 +987,17 @@ def compute_local_support_metrics(pipeline_results: List[Dict]) -> List[Dict]:
 
     These metrics give a quick signal about whether ground-truth tokens appear in
     the retrieved contexts and generated answer without making additional LLM calls.
+    The work is CPU-bound and safe to parallelize because it never touches external
+    APIs, so we opportunistically fan it out using a thread pool when multiple
+    questions are present.
     """
-    metrics: List[Dict[str, Any]] = []
+
+    if not pipeline_results:
+        return []
+
     token_pattern = re.compile(r"\w+")
 
-    for entry in pipeline_results:
+    def _compute(entry: Dict[str, Any]) -> Dict[str, Any]:
         ground_truth = entry.get("ground_truth", "") or ""
         contexts = entry.get("contexts", []) or []
         answer = entry.get("answer", "") or ""
@@ -795,7 +1018,7 @@ def compute_local_support_metrics(pipeline_results: List[Dict]) -> List[Dict]:
             context_hits = answer_hits = 0
             context_recall = answer_recall = 0.0
 
-        metrics.append({
+        return {
             "question_id": entry.get("question_id") or "unknown",
             "ground_truth_token_count": token_count,
             "context_token_hits": context_hits,
@@ -806,7 +1029,12 @@ def compute_local_support_metrics(pipeline_results: List[Dict]) -> List[Dict]:
                 ground_truth.lower() in c.lower() for c in contexts if ground_truth
             ),
             "full_ground_truth_in_answer": bool(ground_truth and ground_truth.lower() in answer_text),
-        })
+        }
+
+    # ThreadPoolExecutor preserves ordering with map(), so table rendering remains deterministic
+    max_workers = min(8, len(pipeline_results)) or 1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        metrics = list(executor.map(_compute, pipeline_results))
 
     return metrics
 
@@ -837,27 +1065,247 @@ def print_local_metrics_summary(local_metrics: List[Dict[str, Any]]):
         )
 
 
-def save_local_metrics_csv(
-    local_metrics: List[Dict[str, Any]],
-    experiment_name: str,
-    batch_id: str
-) -> Optional[str]:
-    """Persist the local metrics to CSV for offline analysis."""
-    if not local_metrics:
+def sanitize_for_json(obj: Any) -> Any:
+    """Recursively convert non-JSON-serializable objects into standard primitives."""
+    if obj is None or isinstance(obj, (str, bool, int, float)):
+        if isinstance(obj, (np.floating, np.integer)):
+            return obj.item()
+        return obj
+
+    if isinstance(obj, np.generic):
+        return obj.item()
+
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+
+    if isinstance(obj, dict):
+        return {str(k): sanitize_for_json(v) for k, v in obj.items()}
+
+    if isinstance(obj, (list, tuple, set)):
+        return [sanitize_for_json(v) for v in obj]
+
+    if isinstance(obj, (bytes, bytearray)):
+        try:
+            return obj.decode('utf-8')
+        except Exception:
+            import base64
+            return base64.b64encode(obj).decode('ascii')
+
+    if isinstance(obj, Path):
+        return str(obj)
+
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+
+    try:
+        return str(obj)
+    except Exception:
         return None
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = Path("evaluation/results") / f"local_metrics_{experiment_name}_{batch_id}_{timestamp}.csv"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fieldnames = list(local_metrics[0].keys())
-    with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(local_metrics)
+def build_results_payload(
+    experiment_name: str,
+    batch_id: str,
+    pipeline_results: List[Dict[str, Any]],
+    local_metrics: List[Dict[str, Any]],
+    evaluation_result: Any,
+    evaluation_seconds: Optional[float]
+) -> Dict[str, Any]:
+    """Builds and sanitizes the JSON-serializable payload for a single experiment run."""
+    ragas_metrics: Dict[str, Any] = {}
+    if evaluation_result and hasattr(evaluation_result, 'to_pandas'):
+        df = evaluation_result.to_pandas()
+        ragas_metrics = {col: df[col].tolist() for col in df.columns if col in ['faithfulness', 'answer_relevancy', 'answer_correctness', 'context_precision', 'context_recall']}
+        metric_cols = list(ragas_metrics.keys())
+        ragas_metrics['summary'] = {
+            col: {
+                'mean': float(df[col].mean()),
+                'std': float(df[col].std()),
+                'min': float(df[col].min()),
+                'max': float(df[col].max()),
+            }
+            for col in metric_cols
+        }
 
-    print(f"[OK] Local metrics saved to: {output_path}")
-    return str(output_path)
+    latencies = []
+    for entry in pipeline_results:
+        latency_value = entry.get('latency_seconds')
+        if latency_value is None:
+            continue
+        try:
+            latencies.append(float(latency_value))
+        except Exception:
+            continue
+    latency_summary = None
+    if latencies:
+        latency_summary = {
+            'total_seconds': sum(latencies),
+            'average_seconds': sum(latencies) / len(latencies),
+            'min_seconds': min(latencies),
+            'max_seconds': max(latencies),
+            'per_question_seconds': latencies,
+        }
+
+    output_data = {
+        'metadata': {
+            'experiment': experiment_name,
+            'batch_id': batch_id,
+            'timestamp': datetime.now().strftime('%Y%m%d_%H%M%S'),
+            'num_questions': len(pipeline_results),
+            'retrieval_candidate_pool': RETRIEVAL_CANDIDATE_POOL,
+            'use_web_research': bool(USE_WEB_RESEARCH),
+            'rerank_keep_top_n': RERANK_KEEP_TOP_N,
+            'generation_top_k': GENERATION_TOP_K,
+            'evaluation_seconds': evaluation_seconds,
+            'latency_summary': latency_summary,
+        },
+        'ragas_metrics': ragas_metrics,
+        'local_metrics': local_metrics or [],
+        'pipeline_results': pipeline_results,
+    }
+
+    return sanitize_for_json(output_data)
+
+
+def save_results(
+    evaluation_result: Any,
+    pipeline_results: List[Dict[str, Any]],
+    experiment_name: str,
+    batch_id: str,
+    local_metrics: Optional[List[Dict[str, Any]]] = None,
+    evaluation_seconds: Optional[float] = None,
+    payload: Optional[Dict[str, Any]] = None
+) -> str:
+    """Saves the evaluation payload to JSON (single experiment)."""
+    if payload is None:
+        payload = build_results_payload(
+            experiment_name,
+            batch_id,
+            pipeline_results,
+            local_metrics or [],
+            evaluation_result,
+            evaluation_seconds
+        )
+
+    # Ensure output directory exists
+    timestamp = payload['metadata']['timestamp']
+    output_filename = f"evaluation/results/ragas_{experiment_name}_{batch_id}_{timestamp}.json"
+    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+    print(f"\n[OK] Results saved to: {output_filename}")
+    return output_filename
+
+
+def _build_metric_comparison_table(payloads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Create a table comparing key metrics across experiments."""
+    metrics = ['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall', 'answer_correctness']
+    table: List[Dict[str, Any]] = []
+    for metric in metrics:
+        row: Dict[str, Any] = {'metric': metric}
+        for payload in payloads:
+            exp = payload.get('metadata', {}).get('experiment') or 'unknown'
+            summary = payload.get('ragas_metrics', {}).get('summary', {}) or {}
+            metric_stats = summary.get(metric) or {}
+            row[exp] = metric_stats.get('mean')
+        table.append(row)
+    return table
+
+
+def _build_response_comparison_table(payloads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Create a table that aligns answers per question across experiments."""
+    response_map: Dict[str, Dict[str, Any]] = {}
+    for payload in payloads:
+        exp = payload.get('metadata', {}).get('experiment') or 'unknown'
+        for entry in payload.get('pipeline_results', []):
+            question_id = entry.get('question_id') or entry.get('question') or "unknown"
+            row = response_map.setdefault(question_id, {
+                'question_id': question_id,
+                'question': entry.get('question'),
+                'ground_truth': entry.get('ground_truth')
+            })
+            row[exp] = entry.get('answer')
+    # Preserve deterministic order by sorting on question_id
+    return [response_map[qid] for qid in sorted(response_map.keys())]
+
+
+def save_aggregated_results(
+    payloads: List[Dict[str, Any]],
+    batch_id: str,
+    runner_args: Dict[str, Any]
+) -> str:
+    """Saves a single JSON containing multiple experiments."""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output_filename = f"evaluation/results/ragas_report_{batch_id}_{timestamp}.json"
+    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
+
+    comparison_table = _build_metric_comparison_table(payloads)
+    response_comparison = _build_response_comparison_table(payloads)
+
+    aggregate = {
+        'metadata': {
+            'batch_id': batch_id,
+            'timestamp': timestamp,
+            'experiments': [payload['metadata'].get('experiment') for payload in payloads],
+            'dataset': EVAL_DATASET_PATH,
+            'runner_args': runner_args,
+        },
+        'comparison_table': comparison_table,
+        'response_table': response_comparison,
+        'experiments': payloads,
+    }
+
+    sanitized = sanitize_for_json(aggregate)
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        json.dump(sanitized, f, indent=2, ensure_ascii=False)
+
+    print(f"\n[OK] Aggregated results saved to: {output_filename}")
+    return output_filename
+
+
+def run_single_experiment(
+    experiment_name: str,
+    batch_id: str,
+    questions: List[Dict[str, Any]],
+    profiles: Dict[str, Any],
+    cache_manager: Optional[CacheManager],
+    skip_ragas: bool,
+    clear_cache: bool
+) -> Dict[str, Any]:
+    """Runs the pipeline, evaluation, and local metrics for a single experiment."""
+    if cache_manager and clear_cache:
+        cache_manager.clear(experiment_name=experiment_name, batch_id=batch_id)
+
+    pipeline_results = run_pipeline(questions, profiles, experiment_name, batch_id, cache_manager)
+    local_metrics = compute_local_support_metrics(pipeline_results)
+
+    if skip_ragas:
+        evaluation_result = {}
+        evaluation_seconds = 0.0
+    else:
+        evaluation_result, evaluation_seconds = run_ragas_evaluation(
+            pipeline_results, experiment_name, batch_id, cache_manager
+        )
+
+    payload = build_results_payload(
+        experiment_name,
+        batch_id,
+        pipeline_results,
+        local_metrics,
+        evaluation_result,
+        evaluation_seconds
+    )
+
+    return {
+        'experiment_name': experiment_name,
+        'pipeline_results': pipeline_results,
+        'local_metrics': local_metrics,
+        'evaluation_result': evaluation_result,
+        'evaluation_seconds': evaluation_seconds,
+        'payload': payload,
+    }
 
 def check_cached_ragas_metrics(
     results: List[Dict],
@@ -884,7 +1332,7 @@ def check_cached_ragas_metrics(
     }
     
     for result in results:
-        question = result.get('question')
+        question = result.get('question') or result.get('user_input') or ''
         question_id = result.get('question_id')
         user_profile_id = result.get('user_profile_id')  # May not exist in result dict
         
@@ -1009,7 +1457,7 @@ def run_ragas_evaluation(
             if not hasattr(evaluation_result, 'to_pandas'):
                 raise ValueError("evaluate() returned unexpected type (missing to_pandas)")
 
-            df = evaluation_result.to_pandas()
+            df = getattr(evaluation_result, 'to_pandas')()
             missing = [c for c in required_cols if c not in df.columns]
             if missing:
                 raise ValueError(f"Missing metric columns in evaluation result: {missing}")
@@ -1027,7 +1475,7 @@ def run_ragas_evaluation(
                 print("Saving RAGAS metrics to cache...")
                 import pandas as pd
                 for i, result in enumerate(results):
-                    question = result.get('question')
+                    question = result.get('question') or result.get('user_input') or ''
                     # Try to get user_profile_id from different possible locations
                     user_profile_id = None
                     # First check if it's in the question data (from test_data)
@@ -1083,133 +1531,6 @@ def run_ragas_evaluation(
 
     print(f"[ERROR] RAGAS evaluation failed after {attempts} attempts. Debug saved to {debug_file}")
     return {}, time.perf_counter() - evaluation_start
-
-
-def save_results(
-    evaluation_result: Any,
-    pipeline_results: List[Dict],
-    experiment_name: str,
-    batch_id: str,
-    local_metrics: Optional[List[Dict[str, Any]]] = None,
-    evaluation_seconds: Optional[float] = None
-) -> str:
-    """Saves evaluation results to a JSON file."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"evaluation/results/ragas_{experiment_name}_{batch_id}_{timestamp}.json"
-    
-    # Ensure output directory exists
-    Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
-    
-    # Extract RAGAS metrics properly from the Result object
-    ragas_metrics = {}
-    if hasattr(evaluation_result, 'to_pandas'):
-        df = evaluation_result.to_pandas()
-        # Convert DataFrame to dictionary with metrics as keys and lists of values
-        ragas_metrics = {col: df[col].tolist() for col in df.columns if col in ['faithfulness', 'answer_relevancy', 'answer_correctness', 'context_precision', 'context_recall']}
-        # Also include summary statistics
-        ragas_metrics['summary'] = {col: {'mean': df[col].mean(), 'std': df[col].std(), 'min': df[col].min(), 'max': df[col].max()} 
-                                   for col in ragas_metrics.keys() if col != 'summary'}
-    
-    # Derive latency statistics
-    latencies = []
-    for entry in pipeline_results:
-        latency_value = entry.get('latency_seconds')
-        if latency_value is None:
-            continue
-        try:
-            latencies.append(float(latency_value))
-        except Exception:
-            continue
-    latency_summary = None
-    if latencies:
-        latency_summary = {
-            "total_seconds": sum(latencies),
-            "average_seconds": sum(latencies) / len(latencies),
-            "min_seconds": min(latencies),
-            "max_seconds": max(latencies),
-            "per_question_seconds": latencies,
-        }
-
-    # Prepare output data
-    output_data = {
-        "metadata": {
-            "experiment": experiment_name,
-            "batch_id": batch_id,
-            "timestamp": timestamp,
-            "num_questions": len(pipeline_results),
-            # Include evaluation run configuration so results are self-describing
-            "retrieval_candidate_pool": RETRIEVAL_CANDIDATE_POOL,
-            "use_web_research": bool(USE_WEB_RESEARCH),
-            "rerank_keep_top_n": RERANK_KEEP_TOP_N,
-            "generation_top_k": GENERATION_TOP_K,
-            "evaluation_seconds": evaluation_seconds,
-            "latency_summary": latency_summary,
-        },
-        "ragas_metrics": ragas_metrics,
-        "local_metrics": local_metrics or [],
-        "pipeline_results": pipeline_results,
-    }
-    
-    # Helper: sanitize objects that are not JSON serializable (numpy types, Path, bytes, etc.)
-    def sanitize_for_json(obj):
-        """Recursively convert non-JSON-serializable objects into JSON-friendly types."""
-        # Primitive types that are already serializable
-        if obj is None or isinstance(obj, (str, bool, int, float)):
-            # Convert numpy scalar floats/ints to native Python types if needed
-            if isinstance(obj, (np.floating, np.integer)):
-                return obj.item()
-            return obj
-
-        # Numpy scalar
-        if isinstance(obj, np.generic):
-            return obj.item()
-
-        # Numpy arrays
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-
-        # Dictionaries: ensure keys are strings and values sanitized
-        if isinstance(obj, dict):
-            new = {}
-            for k, v in obj.items():
-                try:
-                    key = str(k)
-                except Exception:
-                    key = json.dumps(k)
-                new[key] = sanitize_for_json(v)
-            return new
-
-        # Lists / tuples / sets
-        if isinstance(obj, (list, tuple, set)):
-            return [sanitize_for_json(v) for v in obj]
-
-        # Bytes -> decode if possible, otherwise base64
-        if isinstance(obj, (bytes, bytearray)):
-            try:
-                return obj.decode('utf-8')
-            except Exception:
-                import base64
-                return base64.b64encode(obj).decode('ascii')
-
-        # Path or datetime
-        if isinstance(obj, Path):
-            return str(obj)
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-
-        # Fallback: try to convert to string
-        try:
-            return str(obj)
-        except Exception:
-            return None
-
-    # Save to JSON (sanitize first to avoid numpy/other non-serializable types)
-    cleaned = sanitize_for_json(output_data)
-    with open(output_filename, 'w', encoding='utf-8') as f:
-        json.dump(cleaned, f, indent=2, ensure_ascii=False)
-    
-    print(f"\n[OK] Results saved to: {output_filename}")
-    return output_filename
 
 
 def print_metrics_summary(
@@ -1347,8 +1668,19 @@ Examples:
         "--experiment",
         type=str,
         default="baseline",
-        choices=["baseline", "no_rag", "reranking", "grounded_hyde", "combined_best", "semantic_chunking"],
+        choices=EXPERIMENT_CHOICES,
         help="The experiment to run (default: baseline)"
+    )
+    parser.add_argument(
+        "--experiments",
+        type=str,
+        default=None,
+        help="Comma-separated list of experiments to run sequentially (overrides --experiment)"
+    )
+    parser.add_argument(
+        "--run_all_experiments",
+        action="store_true",
+        help="Run every available experiment in a single execution (overrides --experiment)"
     )
     parser.add_argument(
         "--batch_id",
@@ -1388,7 +1720,7 @@ Examples:
         "--dataset",
         type=str,
         default=None,
-        help="Path to evaluation dataset JSON (default: test_data/evaluation_dataset.json)"
+        help="Path to evaluation dataset JSON (default: test_data/evaluation_dataset_auto_ragas.json)"
     )
     # Toggle to show or hide the per-question table output
     table_group = parser.add_mutually_exclusive_group()
@@ -1417,6 +1749,19 @@ Examples:
         global EVAL_DATASET_PATH
         EVAL_DATASET_PATH = str(candidate)
         print(f"Using evaluation dataset: {EVAL_DATASET_PATH}")
+
+    experiments_to_run: List[str]
+    if args.run_all_experiments:
+        experiments_to_run = EXPERIMENT_CHOICES
+    elif getattr(args, 'experiments', None):
+        experiments_to_run = [exp.strip() for exp in args.experiments.split(',') if exp.strip()]
+        if not experiments_to_run:
+            raise ValueError("--experiments requires at least one experiment name")
+        invalid = [exp for exp in experiments_to_run if exp not in EXPERIMENT_CHOICES]
+        if invalid:
+            raise ValueError(f"Unknown experiments requested: {invalid}. Valid choices: {EXPERIMENT_CHOICES}")
+    else:
+        experiments_to_run = [args.experiment]
     
     # Load environment variables
     load_dotenv()
@@ -1427,8 +1772,8 @@ Examples:
         raise ValueError("OPENAI_API_KEY must be set in .env file")
     
     print(f"\n[RAGAS] Evaluation Harness")
-    print(f"Experiment: {args.experiment.upper()}")
     print(f"Batch ID: {args.batch_id}")
+    print(f"Experiments: {', '.join(experiments_to_run)}")
     # Allow CLI override of rerank keep-n
     global RERANK_KEEP_TOP_N
     if getattr(args, 'rerank_keep_n', None) is not None:
@@ -1442,9 +1787,6 @@ Examples:
     cache_manager = None
     if not args.no_cache:
         cache_manager = CacheManager(ttl_hours=args.cache_ttl)
-        if args.clear_cache:
-            print("[Cache] Clearing cache...")
-            cache_manager.clear(experiment_name=args.experiment, batch_id=args.batch_id)
         print(f"[Cache] Initialized (TTL: {args.cache_ttl or 'never expire'})")
     else:
         print("[Cache] Disabled by --no-cache flag")
@@ -1452,48 +1794,51 @@ Examples:
     # Load data
     questions, profiles = load_data()
     
-    # Run pipeline
-    pipeline_results = run_pipeline(questions, profiles, args.experiment, args.batch_id, cache_manager)
+    aggregated_payloads: List[Dict[str, Any]] = []
 
-    # Compute lightweight local metrics before making evaluator calls
-    local_metrics = compute_local_support_metrics(pipeline_results)
-    
-    # Run RAGAS evaluation (skip if requested to speed up runs)
-    evaluation_duration_seconds = 0.0
-    if getattr(args, 'skip_ragas', False):
-        print("\n[Info] Skipping RAGAS evaluation as requested (--skip_ragas).")
-        evaluation_result = {}
-        evaluation_duration_seconds = 0.0
-    else:
-        evaluation_result, evaluation_duration_seconds = run_ragas_evaluation(
-            pipeline_results, args.experiment, args.batch_id, cache_manager
+    for experiment_name in experiments_to_run:
+        print(f"\n{'='*70}\nRunning experiment: {experiment_name.upper()}\n{'='*70}")
+        result = run_single_experiment(
+            experiment_name,
+            args.batch_id,
+            questions,
+            profiles,
+            cache_manager,
+            args.skip_ragas,
+            args.clear_cache
         )
-    
-    # Print and save results
-    print_metrics_summary(
-        evaluation_result,
-        pipeline_results,
-        args.experiment,
-        show_table=args.show_table,
-        evaluation_seconds=evaluation_duration_seconds
-    )
-    print_local_metrics_summary(local_metrics)
-    output_file = save_results(
-        evaluation_result,
-        pipeline_results,
-        args.experiment,
-        args.batch_id,
-        local_metrics,
-        evaluation_seconds=evaluation_duration_seconds
-    )
-    save_local_metrics_csv(local_metrics, args.experiment, args.batch_id)
-    
+
+        aggregated_payloads.append(result['payload'])
+
+        print_metrics_summary(
+            result['evaluation_result'],
+            result['pipeline_results'],
+            experiment_name,
+            show_table=args.show_table,
+            evaluation_seconds=result['evaluation_seconds']
+        )
+        print_local_metrics_summary(result['local_metrics'])
+
+    runner_args = {
+        'skip_ragas': args.skip_ragas,
+        'no_cache': args.no_cache,
+        'clear_cache': args.clear_cache,
+        'cache_ttl': args.cache_ttl,
+        'show_table': args.show_table,
+        'rerank_keep_n': args.rerank_keep_n,
+        'requested_experiments': args.experiments,
+        'experiments_run': experiments_to_run,
+        'run_all_experiments': args.run_all_experiments,
+    }
+    output_file = save_aggregated_results(aggregated_payloads, args.batch_id, runner_args)
+
     # Print cache statistics
     if cache_manager:
         cache_manager.print_stats()
-    
+
     print(f"\n[OK] Evaluation complete!")
-    print(f"Output: {output_file}")
+    if output_file:
+        print(f"Output: {output_file}")
 
 
 if __name__ == "__main__":

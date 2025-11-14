@@ -44,3 +44,4 @@ langchain-openai==0.2.14
 langchain-core==0.3.28
 azure-ai-formrecognizer==3.3.0
 azure-core
+tenacity>=8.2.2

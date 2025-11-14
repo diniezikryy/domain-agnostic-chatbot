@@ -165,7 +165,13 @@ class CacheManager:
             else:
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     cached_data = json.load(f)
-            
+
+            # Annotate with cache key for callers that want to inspect provenance
+            try:
+                cached_data['_cache_key'] = cache_key
+            except Exception:
+                pass
+
             self.hits += 1
             print(f"[Cache HIT] {cache_key[:8]}... (age: {entry_meta.get('created_at', 'unknown')})")
             return cached_data
@@ -185,7 +191,9 @@ class CacheManager:
         generated_answer: str,
         user_profile_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        ragas_metrics: Optional[Dict[str, float]] = None
+        ragas_metrics: Optional[Dict[str, float]] = None,
+        retrieval_seconds: Optional[float] = None,
+        generation_seconds: Optional[float] = None,
     ):
         """
         Store pipeline result in cache.
@@ -212,6 +220,9 @@ class CacheManager:
             "generated_answer": generated_answer,
             "ragas_metrics": ragas_metrics,  # NEW: Cache RAGAS scores
             "metadata": metadata or {},
+            # Per-run timings (if provided) - useful to distinguish cold vs cached runs
+            "retrieval_seconds": float(retrieval_seconds) if retrieval_seconds is not None else None,
+            "generation_seconds": float(generation_seconds) if generation_seconds is not None else None,
             "created_at": datetime.now().isoformat(),
             "cache_version": "2.0",  # Bumped version
         }

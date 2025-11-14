@@ -155,8 +155,8 @@ domain-agnostic-chatbot/
 │   ├── deep_research.py           # External knowledge retrieval
 │   └── prompt.py                  # Research prompts
 ├── test_data/                     # RAGAS evaluation dataset
-│   ├── evaluation_dataset.json    # Test questions & ground truth
-│   └── profile_1.json             # Test user profile
+│   ├── evaluation_dataset_auto_ragas.json    # Test questions & ground truth
+│   └── user_profile.json             # Test user profile
 ├── evaluation/                    # Evaluation framework
 │   ├── debug_ragas_root_cause.py  # Debugging utilities
 │   ├── results/                   # Evaluation results & metrics
@@ -266,6 +266,7 @@ For a detailed, step-by-step guide (PowerShell examples, environment knobs, inte
 
 ### Environment Variables
 - `OPENAI_API_KEY`: Required for embeddings and response generation
+- `ENABLE_TPM_THROTTLE`: Optional. Set to `1` to re-enable fixed inter-question sleep when running `run_evaluation.py`. When unset (default), the harness relies on adaptive retries/backoff and runs at full speed.
 
 ### Tunable Parameters (`config/settings.py`)
 ```python

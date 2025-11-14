@@ -29,11 +29,13 @@ def main():
         "batch",
         "num_questions",
         "total_seconds",
-        "average_seconds",
-        "min_seconds",
-        "max_seconds",
+        "cached_total_seconds",
+        "cold_total_seconds",
+        "cached_count",
+        "cold_count",
         "wall_clock_seconds",
-        "per_question_seconds",
+        "per_question_cold_seconds",
+        "per_question_cached_seconds",
     ]))
 
     for path in files:
@@ -44,25 +46,60 @@ def main():
             print(f"Skipping {os.path.basename(path)} because it couldn't be parsed: {exc}")
             continue
         meta = data.get("metadata", {})
-        ls = meta.get("latency_summary", {})
-        per_question = ls.get("per_question_seconds", [])
-        per_question_str = "|".join(f"{value:.4f}" for value in per_question) if per_question else ""
-        total_latency = sum(per_question) if per_question else 0.0
-        wall_clock_seconds = (total_latency + throttle_delay * len(per_question)) if per_question else None
-        print(
-            ",".join([
-                os.path.basename(path),
-                meta.get("experiment", ""),
-                meta.get("batch_id", ""),
-                str(meta.get("num_questions", "")),
-                format_seconds(ls.get("total_seconds")),
-                format_seconds(ls.get("average_seconds")),
-                format_seconds(ls.get("min_seconds")),
-                format_seconds(ls.get("max_seconds")),
-                format_seconds(wall_clock_seconds) if wall_clock_seconds is not None else "",
-                per_question_str,
-            ])
-        )
+        # Prefer per-question breakdown from the pipeline results so we can split
+        # cached vs cold runs using the `from_cache` flag. Fall back to latency_summary
+        # in metadata if detailed pipeline entries are not present.
+        pipeline_results = data.get("pipeline_results", []) or []
+
+        cold_per_question = []
+        cached_per_question = []
+        for entry in pipeline_results:
+            # Derive a sensible per-question latency: use latency_seconds if present,
+            # otherwise sum retrieval_seconds+generation_seconds or fallback to 0.0
+            latency = entry.get("latency_seconds")
+            if latency is None:
+                r = entry.get("retrieval_seconds") or 0.0
+                g = entry.get("generation_seconds") or 0.0
+                latency = float(r) + float(g)
+
+            if entry.get("from_cache"):
+                cached_per_question.append(float(latency))
+            else:
+                cold_per_question.append(float(latency))
+
+        # Fallback: if no pipeline entries present, use metadata.latency_summary
+        if not pipeline_results:
+            ls = meta.get("latency_summary", {})
+            per_question = ls.get("per_question_seconds", [])
+            # We cannot determine which were cached, assume all are cold
+            cold_per_question = [float(v) for v in per_question]
+            cached_per_question = []
+
+        total_latency = sum(cold_per_question) + sum(cached_per_question)
+        cached_total = sum(cached_per_question)
+        cold_total = sum(cold_per_question)
+        cached_count = len(cached_per_question)
+        cold_count = len(cold_per_question)
+
+        wall_clock_seconds = (cold_total + throttle_delay * cold_count) if (cold_count or cold_total) else 0.0
+
+        per_cold_str = "|".join(f"{v:.4f}" for v in cold_per_question) if cold_per_question else ""
+        per_cached_str = "|".join(f"{v:.4f}" for v in cached_per_question) if cached_per_question else ""
+
+        print(",".join([
+            os.path.basename(path),
+            meta.get("experiment", ""),
+            meta.get("batch_id", ""),
+            str(meta.get("num_questions", "")),
+            format_seconds(total_latency),
+            format_seconds(cached_total),
+            format_seconds(cold_total),
+            str(cached_count),
+            str(cold_count),
+            format_seconds(wall_clock_seconds),
+            per_cold_str,
+            per_cached_str,
+        ]))
 
 
 if __name__ == "__main__":

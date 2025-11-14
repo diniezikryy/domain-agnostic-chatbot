@@ -1,0 +1,53 @@
+{
+  "timestamp": "20251114_235146",
+  "batch_id": "my_policies",
+  "dataset": "test_data\\evaluation_dataset_auto_ragas.json",
+  "parameter_grid": [
+    {
+      "RERANK_HYDE_WEIGHT": "0.4",
+      "RERANK_KEEP_TOP_N": "3",
+      "RETRIEVAL_CANDIDATE_POOL": "30"
+    },
+    {
+      "RERANK_HYDE_WEIGHT": "0.6",
+      "RERANK_KEEP_TOP_N": "5",
+      "RETRIEVAL_CANDIDATE_POOL": "50"
+    },
+    {
+      "RERANK_HYDE_WEIGHT": "0.8",
+      "RERANK_KEEP_TOP_N": "7",
+      "RETRIEVAL_CANDIDATE_POOL": "70"
+    }
+  ],
+  "results": [
+    {
+      "params": {
+        "RERANK_HYDE_WEIGHT": "0.4",
+        "RERANK_KEEP_TOP_N": "3",
+        "RETRIEVAL_CANDIDATE_POOL": "30"
+      },
+      "error": "Timeout",
+      "success": false
+    },
+    {
+      "params": {
+        "RERANK_HYDE_WEIGHT": "0.6",
+        "RERANK_KEEP_TOP_N": "5",
+        "RETRIEVAL_CANDIDATE_POOL": "50"
+      },
+      "error": "Timeout",
+      "success": false
+    },
+    {
+      "params": {
+        "RERANK_HYDE_WEIGHT": "0.8",
+        "RERANK_KEEP_TOP_N": "7",
+        "RETRIEVAL_CANDIDATE_POOL": "70"
+      },
+      "error": "Timeout",
+      "success": false
+    }
+  ],
+  "best_result": null,
+  "best_score": -1
+}

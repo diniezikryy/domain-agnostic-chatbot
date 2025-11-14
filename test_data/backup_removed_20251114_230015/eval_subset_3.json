@@ -1,0 +1,20 @@
+[
+  {
+    "question_id": "TEST_001_BASELINE_RAG",
+    "question": "What is the annual benefit limit for GREAT SupremeHealth?",
+    "ground_truth": "The annual benefit limit for the GREAT SupremeHealth P PLUS plan is S$1,500,000.",
+    "user_profile_id": "profile_1"
+  },
+  {
+    "question_id": "TEST_004_CHUNKING_FLAW",
+    "question": "What is the benefit for 'Post Hospitalisation Treatment' for the 'P PLUS' plan?",
+    "ground_truth": "The benefit for Post Hospitalisation Treatment for the P PLUS plan is 'As Charged', covered for 180 days after discharge.",
+    "user_profile_id": "profile_1"
+  },
+  {
+    "question_id": "TEST_005_COMPARISON",
+    "question": "Compare the medical evacuation coverage in my GREAT TravelCare and my GREAT SupremeHealth policies.",
+    "ground_truth": "Your GREAT TravelCare policy (Platinum tier) provides S$1,000,000 for Emergency Medical Evacuation. Your GREAT SupremeHealth (P PLUS plan) covers 'Emergency Treatment Overseas' as charged.",
+    "user_profile_id": "profile_1"
+  }
+]

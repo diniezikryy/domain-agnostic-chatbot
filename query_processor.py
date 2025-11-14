@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from openai import OpenAI
+from utils.openai_retry import wrap_openai_client
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
@@ -41,6 +42,11 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # Wrap the OpenAI client methods with retry/backoff to handle rate limits
+        try:
+            wrap_openai_client(self.client)
+        except Exception as e:
+            print(f"[openai_retry] Could not enable retry wrapper: {e}")
         self.intent_model = get_model_name("intent")
         self.expansion_model = get_model_name("expansion")
         self.generation_model = get_model_name("generation")

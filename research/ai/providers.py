@@ -4,6 +4,12 @@ from typing import Dict, Any, Optional
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+try:
+    # Enable retry/backoff on the provider-level client as well
+    from utils.openai_retry import wrap_openai_client
+    wrap_openai_client(client)
+except Exception:
+    pass
 
 def parse_response(response: str) -> Dict[str, Any]:
     """Parse JSON response from OpenAI"""
