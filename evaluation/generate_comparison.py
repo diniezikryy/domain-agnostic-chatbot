@@ -72,6 +72,8 @@ def write_csv(rows, out_path: Path):
         "timestamp",
         "num_questions",
         "retrieval_candidate_pool",
+        "latency_total_seconds",
+        "latency_avg_seconds",
     ] + METRICS
 
     with open(out_path, "w", newline="", encoding="utf-8") as csvfile:
@@ -140,6 +142,8 @@ def make_html(rows, cache_summary, out_path: Path):
         "<th>Timestamp</th>"
         "<th>#Q</th>"
         "<th>RetrievalPool</th>"
+        "<th>Latency total (s)</th>"
+        "<th>Latency avg (s)</th>"
     )
     for m in METRICS:
         header_row += f"<th>{m.replace('_',' ').title()}</th>"
@@ -151,6 +155,8 @@ def make_html(rows, cache_summary, out_path: Path):
         row_html += f"<td>{r['timestamp']}</td>"
         row_html += f"<td>{r.get('num_questions','')}</td>"
         row_html += f"<td>{r.get('retrieval_candidate_pool','')}</td>"
+        row_html += f"<td>{r.get('latency_total_seconds','')}</td>"
+        row_html += f"<td>{r.get('latency_avg_seconds','')}</td>"
         for m in METRICS:
             row_html += f"<td>{bar_html(r.get(m, ''), m)}</td>"
         row_html += "</tr>"
@@ -229,12 +235,15 @@ def main():
         summary, metadata = load_ragas_summary(path)
         if summary is None:
             continue
+        latency_meta = metadata.get('latency_summary') or {}
         row = {
             'experiment': exp,
             'file': path.name,
             'timestamp': (metadata.get('timestamp') or info['ts'].strftime('%Y%m%d_%H%M%S')),
             'num_questions': metadata.get('num_questions',''),
             'retrieval_candidate_pool': metadata.get('retrieval_candidate_pool',''),
+            'latency_total_seconds': format_float(latency_meta.get('total_seconds')),
+            'latency_avg_seconds': format_float(latency_meta.get('average_seconds')),
         }
         for m in METRICS:
             val = ""

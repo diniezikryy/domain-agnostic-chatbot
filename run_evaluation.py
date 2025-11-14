@@ -41,6 +41,8 @@ from langchain_openai import ChatOpenAI
 from query_processor import QueryProcessor
 from batch_manager import BatchManager
 from utils.cache_manager import CacheManager
+from utils.model_config import get_model_name
+from utils.throttler import compute_safe_delay
 
 
 MAX_CONTEXTS_FOR_RAGAS = int(os.getenv("MAX_CONTEXTS_FOR_RAGAS", "8"))
@@ -330,7 +332,7 @@ ANSWER:"""
     
     try:
         hyde_response = query_processor.client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=get_model_name("hyde"),
             messages=[{"role": "user", "content": grounded_hyde_prompt}],
             max_tokens=200,
             temperature=0.0
@@ -535,6 +537,7 @@ def run_pipeline(
     else:
         print("Cache: DISABLED")
     print(f"{'='*70}\n")
+    evaluation_start = time.perf_counter()
     
     batch_manager = BatchManager()
     query_processor = QueryProcessor(batch_manager)
@@ -545,6 +548,10 @@ def run_pipeline(
                        f"Please ensure the batch exists in batches/{test_batch_id}/")
     
     print(f"[OK] Successfully loaded test batch '{test_batch_id}'.\n")
+
+    throttle_delay = compute_safe_delay()
+    if throttle_delay > 0:
+        print(f"Throttling between questions by {throttle_delay:.2f}s to stay within the TPM budget.")
     
     # Select the functions to run based on the experiment
     if experiment_name == "baseline":
@@ -579,6 +586,7 @@ def run_pipeline(
         
         print(f"\n--- Processing Question: {question_id} ---")
         print(f"Q: {question}")
+        question_start = time.perf_counter()
         
         # Check cache first
         cached_result = None
@@ -590,19 +598,27 @@ def run_pipeline(
                 user_profile_id=profile_id
             )
         
+        retrieval_seconds = 0.0
+        generation_seconds = 0.0
         if cached_result:
             # Use cached data
             retrieval_data = cached_result["retrieval_data"]
             generated_answer = cached_result["generated_answer"]
+            retrieval_seconds = cached_result.get("retrieval_seconds", 0.0)
+            generation_seconds = cached_result.get("generation_seconds", 0.0)
             print(f"[Using cached result]")
         else:
             # Run the pipeline
             try:
                 # 1. Run Retrieval
+                retrieval_start = time.perf_counter()
                 retrieval_data = retrieval_func(query_processor, question, test_batch_id, user_profile)
+                retrieval_seconds = time.perf_counter() - retrieval_start
                 
                 # 2. Run Generation
+                generation_start = time.perf_counter()
                 generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
+                generation_seconds = time.perf_counter() - generation_start
                 print(f"A: {generated_answer[:100]}...")
                 
                 # Save to cache
@@ -652,6 +668,7 @@ def run_pipeline(
         raw_rerank_info = retrieval_data.get("rerank_info", {}) or {}
         safe_rerank_info = {str(k): v for k, v in raw_rerank_info.items()}
 
+        question_latency = time.perf_counter() - question_start
         results.append({
             "question": question,
             "answer": generated_answer,
@@ -664,7 +681,14 @@ def run_pipeline(
             "rag_contexts": retrieval_data.get("rag_contexts_list", []),
             "web_research": retrieval_data.get("web_research_raw", {}),
             "rerank_info": safe_rerank_info,
+            "latency_seconds": question_latency,
+            "retrieval_seconds": retrieval_seconds,
+            "generation_seconds": generation_seconds,
         })
+
+        if throttle_delay > 0:
+            print(f"Respecting the TPM delay budget: sleeping {throttle_delay:.2f}s before the next question.")
+            time.sleep(throttle_delay)
     
     return results
 
@@ -893,7 +917,7 @@ def run_ragas_evaluation(
     experiment_name: str,
     batch_id: str,
     cache_manager: Optional[CacheManager] = None
-) -> Any:
+) -> tuple[Any, float]:
     """Runs RAGAS metrics on the collected results with validation and retries.
 
     This wrapper will attempt evaluate() up to 3 times and validate the returned
@@ -906,6 +930,7 @@ def run_ragas_evaluation(
     print(f"\n{'='*70}")
     print("Running RAGAS Evaluation Metrics (safe wrapper)...")
     print(f"{'='*70}\n")
+    evaluation_start = time.perf_counter()
     
     # Check if all RAGAS metrics are cached
     cached_metrics = check_cached_ragas_metrics(results, cache_manager, experiment_name, batch_id)
@@ -935,11 +960,11 @@ def run_ragas_evaluation(
             def to_pandas(self):
                 return self._df
         
-        return MockEvaluationResult(pd.DataFrame(df_data))
+        return MockEvaluationResult(pd.DataFrame(df_data)), time.perf_counter() - evaluation_start
 
     if not results:
         print("ERROR: No results to evaluate!")
-        return {}
+        return {}, time.perf_counter() - evaluation_start
 
     dataset = Dataset.from_list(results)
     # Temporarily disable expensive metrics to avoid rate limits
@@ -971,7 +996,7 @@ def run_ragas_evaluation(
             # Use a more cost- and rate-friendly model for RAGAS evaluation to avoid TPM limits
             # Switched to gpt-4o-mini to reduce token-per-minute usage during large evaluations
             # and explicitly request a single generation (n=1) to avoid multiple-completion requests
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, n=1)
+            llm = ChatOpenAI(model=get_model_name("evaluation"), temperature=0.0, n=1)
             evaluation_result = evaluate(
                 dataset, 
                 metrics=metrics, 
@@ -1030,7 +1055,7 @@ def run_ragas_evaluation(
                     )
                 print(f"[Cache] Saved RAGAS metrics for {len(results)} questions.")
             
-            return evaluation_result
+            return evaluation_result, time.perf_counter() - evaluation_start
 
         except Exception as e:
             print(f"RAGAS evaluation attempt {attempt} failed: {e}")
@@ -1057,7 +1082,7 @@ def run_ragas_evaluation(
         json.dump(debug_payload, f, indent=2)
 
     print(f"[ERROR] RAGAS evaluation failed after {attempts} attempts. Debug saved to {debug_file}")
-    return {}
+    return {}, time.perf_counter() - evaluation_start
 
 
 def save_results(
@@ -1065,7 +1090,8 @@ def save_results(
     pipeline_results: List[Dict],
     experiment_name: str,
     batch_id: str,
-    local_metrics: Optional[List[Dict[str, Any]]] = None
+    local_metrics: Optional[List[Dict[str, Any]]] = None,
+    evaluation_seconds: Optional[float] = None
 ) -> str:
     """Saves evaluation results to a JSON file."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1084,6 +1110,26 @@ def save_results(
         ragas_metrics['summary'] = {col: {'mean': df[col].mean(), 'std': df[col].std(), 'min': df[col].min(), 'max': df[col].max()} 
                                    for col in ragas_metrics.keys() if col != 'summary'}
     
+    # Derive latency statistics
+    latencies = []
+    for entry in pipeline_results:
+        latency_value = entry.get('latency_seconds')
+        if latency_value is None:
+            continue
+        try:
+            latencies.append(float(latency_value))
+        except Exception:
+            continue
+    latency_summary = None
+    if latencies:
+        latency_summary = {
+            "total_seconds": sum(latencies),
+            "average_seconds": sum(latencies) / len(latencies),
+            "min_seconds": min(latencies),
+            "max_seconds": max(latencies),
+            "per_question_seconds": latencies,
+        }
+
     # Prepare output data
     output_data = {
         "metadata": {
@@ -1096,6 +1142,8 @@ def save_results(
             "use_web_research": bool(USE_WEB_RESEARCH),
             "rerank_keep_top_n": RERANK_KEEP_TOP_N,
             "generation_top_k": GENERATION_TOP_K,
+            "evaluation_seconds": evaluation_seconds,
+            "latency_summary": latency_summary,
         },
         "ragas_metrics": ragas_metrics,
         "local_metrics": local_metrics or [],
@@ -1164,7 +1212,13 @@ def save_results(
     return output_filename
 
 
-def print_metrics_summary(evaluation_result: Any, pipeline_results: List[Dict[str, Any]], experiment_name: str, show_table: bool = True):
+def print_metrics_summary(
+    evaluation_result: Any,
+    pipeline_results: List[Dict[str, Any]],
+    experiment_name: str,
+    show_table: bool = True,
+    evaluation_seconds: Optional[float] = None
+):
     """Prints a combined table of pipeline results and RAGAS metrics.
 
     The function attempts to merge the per-question RAGAS metrics (if available)
@@ -1258,6 +1312,18 @@ def print_metrics_summary(evaluation_result: Any, pipeline_results: List[Dict[st
     else:
         print("\nNo RAGAS metrics available to summarize.")
 
+    if 'latency_seconds' in pipeline_df.columns:
+        latency_series = pd.to_numeric(pipeline_df['latency_seconds'], errors='coerce').dropna()
+        if not latency_series.empty:
+            latency_total = float(latency_series.sum())
+            latency_mean = float(latency_series.mean())
+            latency_min = float(latency_series.min())
+            latency_max = float(latency_series.max())
+            print(f"\nLatency per question: total={latency_total:.2f}s, avg={latency_mean:.2f}s, min={latency_min:.2f}s, max={latency_max:.2f}s")
+
+        if evaluation_seconds is not None:
+            print(f"\nRAGAS evaluation wall-clock time: {evaluation_seconds:.2f}s")
+
 
 # =========================================================================
 # MAIN ENTRY POINT
@@ -1318,6 +1384,12 @@ Examples:
         action="store_true",
         help="Skip the RAGAS evaluation step (fast mode) and only run pipeline + local metrics."
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Path to evaluation dataset JSON (default: test_data/evaluation_dataset.json)"
+    )
     # Toggle to show or hide the per-question table output
     table_group = parser.add_mutually_exclusive_group()
     table_group.add_argument(
@@ -1335,6 +1407,16 @@ Examples:
     parser.set_defaults(show_table=True)
     
     args = parser.parse_args()
+    # If user provided a custom dataset path, override the module-level EVAL_DATASET_PATH
+    if getattr(args, 'dataset', None):
+        from pathlib import Path
+        candidate = Path(args.dataset)
+        if not candidate.exists():
+            raise FileNotFoundError(f"Dataset file not found: {candidate}")
+        # update the module-level constant to point to the provided dataset
+        global EVAL_DATASET_PATH
+        EVAL_DATASET_PATH = str(candidate)
+        print(f"Using evaluation dataset: {EVAL_DATASET_PATH}")
     
     # Load environment variables
     load_dotenv()
@@ -1377,16 +1459,33 @@ Examples:
     local_metrics = compute_local_support_metrics(pipeline_results)
     
     # Run RAGAS evaluation (skip if requested to speed up runs)
+    evaluation_duration_seconds = 0.0
     if getattr(args, 'skip_ragas', False):
         print("\n[Info] Skipping RAGAS evaluation as requested (--skip_ragas).")
         evaluation_result = {}
+        evaluation_duration_seconds = 0.0
     else:
-        evaluation_result = run_ragas_evaluation(pipeline_results, args.experiment, args.batch_id, cache_manager)
+        evaluation_result, evaluation_duration_seconds = run_ragas_evaluation(
+            pipeline_results, args.experiment, args.batch_id, cache_manager
+        )
     
     # Print and save results
-    print_metrics_summary(evaluation_result, pipeline_results, args.experiment, show_table=args.show_table)
+    print_metrics_summary(
+        evaluation_result,
+        pipeline_results,
+        args.experiment,
+        show_table=args.show_table,
+        evaluation_seconds=evaluation_duration_seconds
+    )
     print_local_metrics_summary(local_metrics)
-    output_file = save_results(evaluation_result, pipeline_results, args.experiment, args.batch_id, local_metrics)
+    output_file = save_results(
+        evaluation_result,
+        pipeline_results,
+        args.experiment,
+        args.batch_id,
+        local_metrics,
+        evaluation_seconds=evaluation_duration_seconds
+    )
     save_local_metrics_csv(local_metrics, args.experiment, args.batch_id)
     
     # Print cache statistics

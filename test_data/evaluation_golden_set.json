@@ -1,0 +1,72 @@
+[
+  {
+    "question_id": "GOLD_001_FACT_RETRIEVAL",
+    "question": "What is the annual benefit limit for my GREAT SupremeHealth policy?",
+    "ground_truth": "The annual benefit limit for your GREAT SupremeHealth **P PLUS** plan is **S$1,500,000**.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Simple Fact Retrieval - Tests extraction of plan-specific limits."
+  },
+  {
+    "question_id": "GOLD_002_TABLE_LOOKUP",
+    "question": "What is my deductible if I stay in a Class A ward at a Restructured Hospital under my health plan?",
+    "ground_truth": "For your **P PLUS** plan (and being under age 80), the deductible for a Class A ward in a Restructured Hospital is **S$3,500**.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Conditional Table Lookup - Tests personalization based on user age and plan tier."
+  },
+  {
+    "question_id": "GOLD_003_EXCLUSION_LOGIC",
+    "question": "Under my ManuProtect Term (II) policy, is the death benefit payable if I commit suicide within the first year?",
+    "ground_truth": "No. If you commit suicide within 1 year from the policy issue date or reinstatement date, the insurer will **not** pay the death benefit. They will refund premiums paid without interest, less expenses.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Exclusion Logic - Tests understanding of policy exclusions."
+  },
+  {
+    "question_id": "GOLD_004_COMPLEX_ADDON",
+    "question": "Does my GREAT TravelCare policy cover my pre-existing asthma, and what is the medical expense limit?",
+    "ground_truth": "Yes, your **Platinum** plan includes the **pre-existing conditions add-on**, which covers your pre-existing conditions. The limit for 'Medical expenses while overseas' for pre-existing conditions is **S$200,000**.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Complex Add-on Logic - Tests detection of add-on benefits and specific sub-limits."
+  },
+  {
+    "question_id": "GOLD_005_SPECIFIC_BENEFIT",
+    "question": "Is Proton Beam Therapy covered under my GREAT SupremeHealth plan, and what is the limit?",
+    "ground_truth": "Yes, Proton Beam Therapy is covered. For your **P PLUS** plan, the benefit limit is **S$80,000** per Period of Insurance.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Specific Benefit Query - Tests finding a specific treatment limit."
+  },
+  {
+    "question_id": "GOLD_006_CONVERSION_PRIVILEGE",
+    "question": "Can I convert my ManuProtect Term (II) policy to a whole life plan?",
+    "ground_truth": "Yes, your policy includes a Conversion Privilege. You can convert it to any available regular premium life insurance plan without evidence of health, provided you do so before the policy anniversary immediately following your **65th birthday**.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Policy Conditions - Tests understanding of rights and deadlines."
+  },
+  {
+    "question_id": "GOLD_007_TIER_COMPARISON",
+    "question": "How does the 'Trip cancellation' limit of my Platinum travel plan compare to lower tiers?",
+    "ground_truth": "Your **Platinum** plan covers up to **S$15,000**. In comparison, the Gold plan covers S$10,000, and the Basic plan covers S$2,000.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Tier Comparison - Tests comparing user's tier against others."
+  },
+  {
+    "question_id": "GOLD_008_DEFINITION_EXTRACTION",
+    "question": "How does my ManuProtect Term (II) policy define 'Terminal Illness'?",
+    "ground_truth": "Terminal Illness (TI) is defined as the conclusive diagnosis of an illness expected to result in death within **12 months**. This must be supported by a medical examiner and confirmed by the insurer's appointed medical examiner.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Definition Extraction - Tests extraction of precise policy definitions."
+  },
+  {
+    "question_id": "GOLD_009_LIFESTYLE_BENEFIT",
+    "question": "Does my GREAT TravelCare plan cover damage to golf equipment?",
+    "ground_truth": "Yes, your **Platinum** plan covers damage to or loss of golf equipment up to **S$1,000**.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Lifestyle Benefit - Tests retrieval of tier-specific lifestyle benefits."
+  },
+  {
+    "question_id": "GOLD_010_COINSURANCE_LOGIC",
+    "question": "What is the co-insurance rate for my GREAT SupremeHealth plan?",
+    "ground_truth": "The co-insurance rate for your **P PLUS** plan is **10%**.",
+    "user_profile_id": "profile_1",
+    "test_scenario": "Complex Policy Logic - Tests retrieval of standard cost-sharing percentages."
+  }
+]

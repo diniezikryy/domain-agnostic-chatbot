@@ -3,8 +3,8 @@ Query Processor
 Handles domain-agnostic query processing using hybrid FAISS + BM25 search.
 Loads user profile for personalized responses within specific batches (e.g., 'my_policies').
 
-* This is the "Comprehensive" version that relies on the detailed user_profile.json
-* to provide facts and uses the document chunks only for citation.
+            intent_response = self.client.chat.completions.create(
+                model=self.streaming_model,
 """
 
 import json
@@ -18,6 +18,7 @@ from openai import OpenAI
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
 from research import DeepResearch  
+from utils.model_config import get_model_name
 
 
 class QueryProcessor:
@@ -40,6 +41,10 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.intent_model = get_model_name("intent")
+        self.expansion_model = get_model_name("expansion")
+        self.generation_model = get_model_name("generation")
+        self.streaming_model = get_model_name("stream")
         # self.user_profile = self._load_user_profile()  # Load profile on initialization
 
     # def _load_user_profile(self) -> Optional[Dict[str, Any]]:
@@ -120,7 +125,7 @@ class QueryProcessor:
         # 1. Analyze Intent
         try:
             intent_response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=self.intent_model,
                 messages=[{"role": "user", "content": self._get_intent_prompt(query)}],
                 response_format={"type": "json_object"},
                 temperature=0.1
@@ -233,7 +238,7 @@ CRITICAL RESPONSE RULES:
         # 5. Call OpenAI API (non-streaming)
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=self.expansion_model,
                 messages=[
                     {"role": "system", "content": "You are an expert financial advisor specializing in insurance policy analysis and benefits explanation."},
                     {"role": "user", "content": prompt_instructions},
@@ -342,7 +347,7 @@ CRITICAL RESPONSE RULES:
             """
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=self.generation_model,
                 messages=[{"role": "user", "content": expansion_prompt}],
                 max_tokens=150,  # Increased for more comprehensive expansion
                 temperature=0.1,
@@ -511,7 +516,7 @@ CRITICAL RESPONSE RULES:
                 raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",  # use gpt-3.5-turbo for cheaper model
+                model=self.generation_model,  # use gpt-3.5-turbo for cheaper model
                 messages=[
                     {
                         "role": "system",
@@ -602,7 +607,7 @@ CRITICAL RESPONSE RULES:
             # 5. Call OpenAI API with streaming
             try:
                 response = self.client.chat.completions.create(
-                    model="gpt-4-1106-preview",
+                    model=self.streaming_model,
                     messages=[
                         {"role": "system", "content": "You are an expert financial advisor..."},
                         {"role": "user", "content": prompt_instructions},
@@ -651,7 +656,7 @@ CRITICAL RESPONSE RULES:
             # Analyze query intent ---- for deep research part
             try:
                 intent_response = self.client.chat.completions.create(
-                    model="gpt-4o",  # gpt-3.5-turbo for cheaper model
+                    model=self.intent_model,  # gpt-3.5-turbo for cheaper model
                     messages=[{"role": "user", "content": self._get_intent_prompt(query)}],
                     response_format={"type": "json_object"},
                     temperature=0.1
@@ -820,7 +825,7 @@ CRITICAL RESPONSE RULES:
                 raise ValueError("OpenAI client is not initialized.")
 
             stream = self.client.chat.completions.create(
-                model="gpt-4-1106-preview",  # Using GPT-4 Turbo for good balance
+                model=self.streaming_model,  # Using GPT-4 Turbo for good balance
                 messages=[
                     {
                         "role": "system",
@@ -1079,7 +1084,7 @@ Research Objectives:
             # Analyze query intent synchronously for both standard and streaming responses
             try:
                 intent_response = self.client.chat.completions.create(
-                    model="gpt-4-1106-preview",
+                    model=self.intent_model,
                     messages=[{"role": "user", "content": self._get_intent_prompt(query)}],
                     response_format={"type": "json_object"},
                     temperature=0.1
