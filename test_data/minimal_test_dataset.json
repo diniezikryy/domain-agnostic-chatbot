@@ -1,0 +1,32 @@
+[
+  {
+    "question_id": "MINIMAL_001",
+    "question": "What is the annual benefit limit for GREAT SupremeHealth?",
+    "ground_truth": "The annual benefit limit for the GREAT SupremeHealth P PLUS plan is S$1,500,000.",
+    "reference_contexts": [
+      "The annual benefit limit for GREAT SupremeHealth P PLUS is S$1,500,000 per Period of Insurance."
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "simple_retrieval"
+  },
+  {
+    "question_id": "MINIMAL_002",
+    "question": "What is the limit for inpatient rehabilitation care in a private hospital under the B PLUS plan in S$?",
+    "ground_truth": "The limit for inpatient rehabilitation care in a private hospital under the B PLUS plan is $800 per day.",
+    "reference_contexts": [
+      "|  LIMITS ON EXPENSES (All Amounts in S$) |  |  |  |  |\n| --- | --- | --- | --- | --- |\n| Plan Type |  | P PLUS | A PLUS | B PLUS |\n| Hospital / Ward Class Entitlement |  | Private & Restructured Hospitals | Restructured Hospitals, Class A Wards & lower | Restructured Hospitals, Class B1 Wards & lower |\n| Expense Item |  | Benefit Limit | Benefit Limit | Benefit Limit |\n| 3.  ADDITIONAL BENEFITS |  |  |  |  |\n|  Inpatient Sub-acute Care | Provided in a Restructured Hospital / government-funded Community Hospital |  | As Charged2 |  |\n|  | Provided in a Private Hospital / private Community Hospital | $1,200 per day | $1,200 per day | $1,000 per day |\n|  Inpatient Rehabilitation Care | Provided in a Restructured Hospital / government-funded Community Hospital |  | As Charged2 |  |\n|  | Provided in a Private Hospital / private Community Hospital | $1,000 per day | $1,000 per day | $800 per day |\n| Inpatient Palliative Care |  | As Charged2 |  |  |\n| Outpatient Autologous Bone Marrow Transplant (for Multiple Myeloma) |  | $30,000 per Period of Insurance | $30,000 per Period of Insurance | $20,000 per Period of Insurance |\n| Proton Beam Therapy10 |  | $80,000 per Period of Insurance | $80,000 per Period of Insurance | $40,000 per Period of Insurance |\n| Cell, Tissue and Gene Therapy11 | Kymriah | $200,000 per treatment (Limited to one treatment per indication per Lifetime)12 | $200,000 per treatment (Limited to one treatment per indication per Lifetime)12 | $150,000 per treatment (Limited to one treatment per indication per Lifetime)12 |\n|  | Yescarta | $200,000 per treatment (Limited to one treatment per indication per Lifetime)12 | $200,000 per treatment (Limited to one treatment per indication per Lifetime) 12 | $150,000 per treatment (Limited to one treatment per indication per Lifetime)12 |\n| Psychiatric Treatment |  | $5,000 per Period of Insurance | $5,000 per Period of Insurance | $4,000 per Period of Insurance |\n| "
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "table_extraction"
+  },
+  {
+    "question_id": "MINIMAL_003",
+    "question": "Compare the medical evacuation coverage in my GREAT TravelCare and my GREAT SupremeHealth policies.",
+    "ground_truth": "Your GREAT TravelCare policy (Platinum tier) provides S$1,000,000 for Emergency Medical Evacuation. Your GREAT SupremeHealth (P PLUS plan) covers 'Emergency Treatment Overseas' as charged.",
+    "reference_contexts": [
+      "GREAT TravelCare: Emergency Medical Evacuation: S$1,000,000 (Platinum tier). GREAT SupremeHealth: Emergency Treatment outside Singapore: As Charged (Limited to Private Hospitals charges) for P PLUS plan."
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "multi_document_comparison"
+  }
+]
