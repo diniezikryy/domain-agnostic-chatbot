@@ -156,12 +156,12 @@ reranker_manager = RerankerManager()
 # CONFIGURATION
 # =========================================================================
 
-EVAL_DATASET_PATH = "test_data/evaluation_dataset_auto_ragas.json"
+EVAL_DATASET_PATH = "test_data/evaluation_dataset_minimal.json"
 TEST_PROFILES_DIR = "test_data"
 
 # IMPORTANT: Update this to match your test user's batch_id
 # First, register a user in the UI, upload the 3 PDFs, then find the batch_id in batches/
-DEFAULT_TEST_BATCH_ID = "my_policies"  # Actual batch ID
+DEFAULT_TEST_BATCH_ID = "my_policies"  # Actual batch ID - change to match your setup
 
 
 # =========================================================================

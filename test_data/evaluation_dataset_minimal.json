@@ -1,0 +1,23 @@
+[
+  {
+    "question_id": "AUTO_001",
+    "question": "What MediShield Life limit for outpatient cancer drug treatment for one primary cancer?",
+    "ground_truth": "MediShield Life's limit for outpatient cancer drug treatment for one primary cancer is 5 times the limit per month.",
+    "user_profile_id": "user_profile",
+    "test_scenario": "baseline_rag"
+  },
+  {
+    "question_id": "AUTO_002",
+    "question": "What is the limit for inpatient rehabilitation care in a private hospital under the B PLUS plan in S$?",
+    "ground_truth": "The limit for inpatient rehabilitation care in a private hospital under the B PLUS plan is $800 per day.",
+    "user_profile_id": "user_profile",
+    "test_scenario": "baseline_rag"
+  },
+  {
+    "question_id": "AUTO_003",
+    "question": "What is the annual deductible for GREAT SupremeHealth P PLUS plan?",
+    "ground_truth": "The annual deductible for GREAT SupremeHealth P PLUS plan is S$3,500 for persons under 80 years old.",
+    "user_profile_id": "user_profile",
+    "test_scenario": "baseline_rag"
+  }
+]
