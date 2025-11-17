@@ -346,6 +346,190 @@ class HybridSearchEngine:
 
         return combined[:top_k]
 
+    def hybrid_search_rrf(
+        self,
+        query: str,
+        top_k: int = 10,
+        k: int = 60,
+        ensure_top_sources: bool = True,
+        promote_order: Optional[List[str]] = None,
+        force: bool = False,
+        faiss_confidence_threshold: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform hybrid search using Reciprocal Rank Fusion (RRF).
+        
+        RRF is a principled, parameter-free method that combines ranked lists
+        from multiple search systems. It ignores raw scores and uses only ranks.
+        
+        Formula: RRF_score = (1 / (k + rank_faiss)) + (1 / (k + rank_bm25))
+        
+        Args:
+            query: Search query string
+            top_k: Number of results to return
+            k: RRF constant (default 60, empirically validated)
+        
+        Returns:
+            List of combined results ranked by RRF score
+        """
+        if not self.faiss_index or not self.bm25_index:
+            print("Indexes not loaded")
+            return []
+
+        try:
+            # Get FAISS and BM25 results (use a larger candidate set for fusion)
+            candidate_k = max(top_k * 2, 50)  # Get more candidates for fusion
+            faiss_results = self._faiss_search(query, candidate_k)
+            bm25_results = self._bm25_search(query, candidate_k)
+
+            # --- RRF Gate: only apply RRF fusion if FAISS confidence is low
+            # This keeps RRF conservative by default and prevents noisy BM25
+            # items from diluting high-confidence FAISS hits.
+            # The 'force' parameter overrides the gate and will always run RRF.
+            try:
+                if faiss_confidence_threshold is None:
+                    env_val = os.getenv("RRF_FAISS_CONFIDENCE_THRESHOLD")
+                    if env_val is not None and env_val.strip() != "":
+                        try:
+                            faiss_confidence_threshold = float(env_val)
+                        except Exception:
+                            faiss_confidence_threshold = 0.5
+                    else:
+                        faiss_confidence_threshold = 0.5
+                # Determine top FAISS score (use first result if available)
+                top_faiss_score = None
+                if faiss_results:
+                    # faiss search returns 'score' which is a similarity value
+                    top_faiss_score = float(faiss_results[0].get("score", 0.0))
+
+                if not force and (top_faiss_score is not None) and (top_faiss_score >= float(faiss_confidence_threshold)):
+                    # Return a fallback hybrid search result if FAISS is already confident
+                    print(f"[RRF Gate] Skipping RRF: top FAISS score={top_faiss_score} >= threshold={faiss_confidence_threshold}")
+                    fallback = self.hybrid_search(query, top_k=top_k)
+                    # Standardize fallback keys to include 'score' for compatibility
+                    out = []
+                    for r in fallback:
+                        r_copy = r.copy()
+                        # Some hybrid results have 'combined_score' - map it to 'score'
+                        r_copy["score"] = r_copy.get("combined_score", r_copy.get("score", 0.0))
+                        out.append(r_copy)
+                    return out
+            except Exception:
+                # be defensive - if gating fails for any reason, continue with RRF
+                pass
+
+            # Build rank maps: content -> rank (0-indexed position in ranked list)
+            # Also create content -> result mappings so we can retrieve metadata
+            faiss_ranks = {}
+            bm25_ranks = {}
+            faiss_map = {}
+            bm25_map = {}
+
+            for i, result in enumerate(faiss_results):
+                content = result.get("content")
+                if content is not None:
+                    faiss_ranks[content] = i
+                    faiss_map[content] = result
+
+            for i, result in enumerate(bm25_results):
+                content = result.get("content")
+                if content is not None:
+                    bm25_ranks[content] = i
+                    bm25_map[content] = result
+
+            # Collect all unique content items
+            all_content = set(faiss_ranks.keys()) | set(bm25_ranks.keys())
+
+            # Calculate RRF scores
+            rrf_scores = {}
+            for content in all_content:
+                faiss_rank = faiss_ranks.get(content, len(faiss_results))  # Missing -> worst rank
+                bm25_rank = bm25_ranks.get(content, len(bm25_results))     # Missing -> worst rank
+                
+                rrf_score = (1.0 / (k + faiss_rank + 1)) + (1.0 / (k + bm25_rank + 1))
+                rrf_scores[content] = rrf_score
+
+            # Sort by RRF score
+            sorted_content = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+
+            # Build result list from the sorted content
+            results = []
+            for rank_position, (content, rrf_score) in enumerate(sorted_content):
+                # Get metadata and source info from whichever search found it
+                # Prefer metadata from FAISS if available, fallback to BM25
+                if content in faiss_map and content in bm25_map:
+                    metadata = faiss_map[content].get("metadata", {}) or bm25_map[content].get("metadata", {})
+                    source = "faiss+bm25"
+                elif content in faiss_map:
+                    metadata = faiss_map[content].get("metadata", {})
+                    source = "faiss"
+                else:
+                    metadata = bm25_map[content].get("metadata", {})
+                    source = "bm25"
+
+                results.append({
+                    "content": content,
+                    "score": rrf_score,
+                    "source": source,
+                    "metadata": metadata,
+                    "combined_score": rrf_score,  # For consistency with other methods
+                })
+
+            def _promote_top_source(raw_results: List[Dict[str, Any]], position: int = 0) -> None:
+                if not raw_results:
+                    return
+                target = raw_results[0].get("content")
+                if not target:
+                    return
+
+                for idx, existing in enumerate(results):
+                    if existing.get("content") == target:
+                        # Move to the desired position regardless of its current
+                        # position so promote_order controls which source is favored.
+                        insert_pos = min(max(position, 0), len(results))
+                        if idx != insert_pos:
+                            promoted = results.pop(idx)
+                            results.insert(insert_pos, promoted)
+                        return
+
+                score = rrf_scores.get(target, raw_results[0].get("score", 0.0))
+                # If not present, insert the promoted content into the results
+                insert_pos = min(max(position, 0), len(results))
+                results.insert(insert_pos, {
+                    "content": target,
+                    "score": score,
+                    "source": raw_results[0].get("source", "unknown"),
+                    "metadata": raw_results[0].get("metadata", {}),
+                    "combined_score": score,
+                })
+
+            if ensure_top_sources:
+                # promotion order can be provided as a list or defaults to
+                # an environment-controlled preference. This allows callers
+                # to prefer Faiss (semantic) over BM25 when promoting candidates.
+                if promote_order is None:
+                    promote_order_env = os.getenv("RRF_PROMOTE_ORDER", "faiss,bm25")
+                    promote_order = [p.strip().lower() for p in promote_order_env.split(",") if p.strip()]
+
+                # Only allow known sources
+                allowed = [p for p in promote_order if p in ("faiss", "bm25")]
+
+                for pos, src in enumerate(allowed):
+                    if src == "faiss":
+                        _promote_top_source(faiss_results, position=pos)
+                    elif src == "bm25":
+                        _promote_top_source(bm25_results, position=pos)
+
+            trimmed = results[:top_k]
+            for rank_position, entry in enumerate(trimmed):
+                entry["rank"] = rank_position
+
+            return trimmed
+
+        except Exception as e:
+            print(f"Error in hybrid_search_rrf: {e}")
+            return []
+
     def get_stats(self) -> Dict[str, Any]:
         """Get search engine statistics."""
         return {

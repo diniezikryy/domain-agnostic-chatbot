@@ -240,6 +240,37 @@ python run_evaluation.py --experiment baseline --batch_id my_policies
 # Run improvement experiments
 python run_evaluation.py --experiment reranking --batch_id my_policies
 python run_evaluation.py --experiment hyde --batch_id my_policies
+# Combine Grounded HyDE with RRF fusion + reranking
+python run_evaluation.py --experiment combined_best_rrf --batch_id my_policies
+## Quick tuning + validation (semantic chunking + reranking)
+
+1. Run a short grid search on the small (two-question) dataset to cheaply explore parameter space:
+
+```bash
+# Short-run tuning (2Q dataset)
+python scripts/tune_semantic_rerank.py --batch_id my_policies --dataset test_data/evaluation_dataset_two_questions.json --latency_weight 0.05 --precision_weight 0.2 --relevancy_weight 0.1 --token_weight 0.01
+```
+
+2. The tuner writes best parameters to an output JSON in `evaluation/tuning_results/semantic_rerank_tuning_*.json`.
+
+3. Use the tuned parameters to run a full validation over the 12-question golden set:
+
+```powershell
+# Example for PowerShell (Windows)
+set RETRIEVAL_CANDIDATE_POOL=50; set RERANK_KEEP_TOP_N=3; set GENERATION_TOP_K=5; python run_evaluation.py --experiments semantic_reranking,baseline --batch_id my_policies --dataset test_data/evaluation_dataset_auto_ragas.json --no-cache
+```
+
+4. Generate a human-readable comparison CSV/HTML from the latest results:
+
+```bash
+python evaluation/generate_comparison.py
+```
+
+5. Optionally archive old results to keep the results directory tidy:
+
+```bash
+python scripts/clear_old_results.py
+```
 
 # Compare embedding models
 python run_evaluation.py --experiment baseline --batch_id my_policies_large

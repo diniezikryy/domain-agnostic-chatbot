@@ -140,47 +140,79 @@ class FileHandler:
 
     # --- Helper Methods (From Evaluation Repo) ---
     def _create_semantic_chunks(self, text: str) -> Tuple[List[str], str]:
-        MAX_CHUNK_CHARS = 2000  # Reduced to avoid token limit (8192 tokens / 4 chars per token = ~2000 chars safe)
-        MIN_CHUNK_CHARS = 50
-        
-        has_headers = re.search(r'^#{1,6}\s+', text, re.MULTILINE)
-        if not has_headers:
-            # No headers, use fixed chunking to avoid giant chunks
-            return self._create_chunks(text)
+        # Prefer LangChain's MarkdownHeaderTextSplitter if available. It is robust to
+        # preserving header structure and avoids breaking tables while respecting
+        # chunk size and overlap configuration.
+        try:
+            from langchain.text_splitter import MarkdownHeaderTextSplitter
 
-        chunks = []
-        header_pattern = re.compile(r'^(#{1,6}\s+.+)$', re.MULTILINE)
-        sections = re.split(header_pattern, text)
-        
-        current_chunk = ""
-        for section in sections:
-            if not section.strip(): continue
-            if header_pattern.match(section):
-                if current_chunk.strip() and len(current_chunk) > MIN_CHUNK_CHARS:
-                    chunks.append(current_chunk.strip())
-                current_chunk = section + "\n"
-            else:
-                # Check if adding this section would exceed MAX_CHUNK_CHARS
-                if len(current_chunk) + len(section) > MAX_CHUNK_CHARS and current_chunk.strip():
-                    chunks.append(current_chunk.strip())
-                    current_chunk = section
+            # Configurable chunk sizes: try to keep the same safe defaults used
+            # previously but allow LangChain to do the heavy lifting with better
+            # heuristics for markdown structures.
+            max_chars = 2000
+            overlap = 200
+
+            splitter = MarkdownHeaderTextSplitter(
+                chunk_size=max_chars,
+                chunk_overlap=overlap,
+                # Keep headers in the split to preserve context
+                keep_headers=True,
+            )
+
+            chunks = splitter.split_text(text)
+            # LangChain returns a list of strings or TextChunk objects; normalize
+            final = [c if isinstance(c, str) else getattr(c, "text", str(c)) for c in chunks if c and str(c).strip()]
+            # Fallback to smaller chunks if none produced
+            if not final:
+                return self._create_chunks(text)
+            return final, "semantic"
+
+        except Exception:
+            # If LangChain isn't available or fails for any reason, fall back
+            # to our heuristic fallback that uses headers via regex. This keeps
+            # backward-compatibility with existing batches if LangChain is not
+            # installed in the runtime environment.
+            MAX_CHUNK_CHARS = 2000  # Reduced to avoid token limit
+            MIN_CHUNK_CHARS = 50
+            has_headers = re.search(r'^#{1,6}\s+', text, re.MULTILINE)
+            if not has_headers:
+                # No headers, use fixed chunking to avoid giant chunks
+                return self._create_chunks(text)
+
+            chunks = []
+            header_pattern = re.compile(r'^(#{1,6}\s+.+)$', re.MULTILINE)
+            sections = re.split(header_pattern, text)
+
+            current_chunk = ""
+            for section in sections:
+                if not section.strip():
+                    continue
+                if header_pattern.match(section):
+                    if current_chunk.strip() and len(current_chunk) > MIN_CHUNK_CHARS:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = section + "\n"
                 else:
-                    current_chunk += section
-        
-        if current_chunk.strip():
-            chunks.append(current_chunk.strip())
-        
-        # Safety: split any oversized chunks
-        final_chunks = []
-        for chunk in chunks:
-            if len(chunk) > MAX_CHUNK_CHARS:
-                # Use fixed chunking for oversized chunks
-                sub_chunks, _ = self._create_chunks(chunk)
-                final_chunks.extend(sub_chunks)
-            else:
-                final_chunks.append(chunk)
-        
-        return final_chunks, "semantic"
+                    # Check if adding this section would exceed MAX_CHUNK_CHARS
+                    if len(current_chunk) + len(section) > MAX_CHUNK_CHARS and current_chunk.strip():
+                        chunks.append(current_chunk.strip())
+                        current_chunk = section
+                    else:
+                        current_chunk += section
+
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+
+            # Safety: split any oversized chunks
+            final_chunks = []
+            for chunk in chunks:
+                if len(chunk) > MAX_CHUNK_CHARS:
+                    # Use fixed chunking for oversized chunks
+                    sub_chunks, _ = self._create_chunks(chunk)
+                    final_chunks.extend(sub_chunks)
+                else:
+                    final_chunks.append(chunk)
+
+            return final_chunks, "semantic"
 
     def _create_chunks(self, text: str) -> Tuple[List[str], str]:
         if len(text) <= self.chunk_size:

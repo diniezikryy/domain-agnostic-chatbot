@@ -23,6 +23,7 @@ METRICS = [
 ]
 
 PATTERN = re.compile(r"ragas_([a-zA-Z0-9_]+)_my_policies_(\d{8}_\d{6})\.json$")
+REPORT_PATTERN = re.compile(r"ragas_report_my_policies_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_.*\.json$")
 
 
 def find_latest_ragas_files(results_dir: Path):
@@ -41,6 +42,20 @@ def find_latest_ragas_files(results_dir: Path):
         if prev is None or ts > prev["ts"]:
             files[exp] = {"path": p, "ts": ts}
     return files
+
+
+def find_latest_ragas_report(results_dir: Path):
+    """Find the latest ragas_report for this batch and return its path.
+
+    This is a fallback for aggregated runs that create a single report file
+    containing the results for multiple experiments (e.g., baseline+semantic_reranking).
+    """
+    reports = list(results_dir.glob("ragas_report_my_policies_*.json"))
+    if not reports:
+        return None
+    # Pick newest by modification time
+    reports_sorted = sorted(reports, key=lambda p: p.stat().st_mtime, reverse=True)
+    return reports_sorted[0]
 
 
 def load_ragas_summary(path: Path):
@@ -226,15 +241,54 @@ def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     files = find_latest_ragas_files(RESULTS_DIR)
     if not files:
-        print(f"No ragas JSON files found in {RESULTS_DIR}")
-        return 1
+        # Try aggregated ragas report (single JSON containing multiple experiments)
+        report_path = find_latest_ragas_report(RESULTS_DIR)
+        if report_path is None:
+            print(f"No ragas JSON files found in {RESULTS_DIR}")
+            return 1
+        # Load aggregated report and extract experiments
+        print(f"Found aggregated ragas report: {report_path.name}. Building comparison from it.")
+        with open(report_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
 
-    rows = []
-    for exp,info in sorted(files.items()):
-        path = info['path']
-        summary, metadata = load_ragas_summary(path)
-        if summary is None:
-            continue
+        # Each experiment payload is in data['experiments'] list
+        exp_payloads = data.get('experiments', [])
+        rows = []
+        for payload in exp_payloads:
+            metadata = payload.get('metadata', {})
+            ragas = payload.get('ragas_metrics', {})
+            summary = ragas.get('summary', {}) if isinstance(ragas, dict) else {}
+            latency_meta = metadata.get('latency_summary') or {}
+            row = {
+                'experiment': metadata.get('experiment', 'unknown'),
+                'file': report_path.name,
+                'timestamp': metadata.get('timestamp') or data.get('metadata', {}).get('timestamp') or '',
+                'num_questions': metadata.get('num_questions',''),
+                'retrieval_candidate_pool': metadata.get('retrieval_candidate_pool',''),
+                'latency_total_seconds': format_float(latency_meta.get('total_seconds')),
+                'latency_avg_seconds': format_float(latency_meta.get('average_seconds')),
+            }
+            for m in METRICS:
+                val = ''
+                if isinstance(summary, dict) and m in summary:
+                    v = summary.get(m)
+                    if isinstance(v, dict) and 'mean' in v:
+                        val = v['mean']
+                    else:
+                        try:
+                            val = float(v)
+                        except Exception:
+                            val = ''
+                row[m] = format_float(val) if val != '' else ''
+            rows.append(row)
+
+    if files:
+        rows = []
+        for exp, info in sorted(files.items()):
+            path = info['path']
+            summary, metadata = load_ragas_summary(path)
+            if summary is None:
+                continue
         latency_meta = metadata.get('latency_summary') or {}
         row = {
             'experiment': exp,

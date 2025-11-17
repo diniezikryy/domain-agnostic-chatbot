@@ -353,7 +353,8 @@ CRITICAL RESPONSE RULES:
             """
 
             response = self.client.chat.completions.create(
-                model=self.generation_model,
+                # Use the expansion model for query expansion (gpt-4o-mini by default)
+                model=self.expansion_model,
                 messages=[{"role": "user", "content": expansion_prompt}],
                 max_tokens=150,  # Increased for more comprehensive expansion
                 temperature=0.1,

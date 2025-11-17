@@ -3,6 +3,12 @@ RAGAS Evaluation Harness
 Orchestrates evaluation of RAG pipeline with experiments including baseline, no_rag, reranking, HyDE and semantic_chunking.
 Uses gpt-4o-mini for RAGAS metrics to reduce costs.
 
+Output Naming Scheme:
+- Individual experiments: ragas_{experiment}_{batch_id}_{readable_time}.json
+- Multi-experiment reports: ragas_report_{batch_id}_{readable_time}_{experiments}.json
+- Readable time format: YYYY-MM-DD_HH-MM-SS
+- Experiments sorted alphabetically and joined with '+'
+
 Usage:
   python run_evaluation.py --experiment baseline --batch_id my_policies
   python run_evaluation.py --experiment reranking --batch_id my_policies
@@ -61,15 +67,38 @@ RERANK_KEEP_TOP_N = int(os.getenv("RERANK_KEEP_TOP_N", str(GENERATION_TOP_K)))
 RETRIEVAL_CANDIDATE_POOL = int(os.getenv("RETRIEVAL_CANDIDATE_POOL", "50"))
 USE_WEB_RESEARCH = os.getenv("USE_WEB_RESEARCH", "false").lower() in ("1", "true", "yes")
 
+# RRF fusion aggressiveness: lower values weight the very top-ranked chunks more heavily.
+# First recommended fix for regressions is to dial this down from the theoretical 60 default.
+RRF_FUSION_K = int(os.getenv("RRF_FUSION_K", "20"))
+
+# Number of RRF-fused chunks to append before reranking when running the
+# combined_best_rrf experiment. Keep modest to avoid overwhelming the reranker.
+COMBINED_RRF_TOP_M = int(os.getenv("COMBINED_RRF_TOP_M", "8"))
+
+# Optional override to force RRF regardless of gating
+RRF_FORCE = os.getenv("RRF_FORCE", "false").lower() in ("1", "true", "yes")
+# FAISS confidence threshold for gating RRF (applies if force==False)
+try:
+    RRF_FAISS_CONFIDENCE_THRESHOLD = float(os.getenv("RRF_FAISS_CONFIDENCE_THRESHOLD", "0.5"))
+except Exception:
+    RRF_FAISS_CONFIDENCE_THRESHOLD = 0.5
+
+# Allow configuration of which sources to promote into the RRF top-k (string list). Example: 'faiss,bm25'
+RRF_PROMOTE_ORDER = os.getenv("RRF_PROMOTE_ORDER", "faiss,bm25")
+
 ENABLE_TPM_THROTTLE = os.getenv("ENABLE_TPM_THROTTLE", "false").lower() in ("1", "true", "yes")
 
 EXPERIMENT_CHOICES = [
     "baseline",
     "no_rag",
     "reranking",
+    "rrf",
     "grounded_hyde",
     "combined_best",
+    "combined_best_rrf",
     "semantic_chunking",
+    "semantic_reranking",
+    "advanced_fusion",
 ]
 
 
@@ -340,6 +369,91 @@ def run_retrieval_rerank(
     return retrieval_data
 
 
+def run_retrieval_rrf(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Experiment: Runs retrieval using Reciprocal Rank Fusion (RRF) to combine FAISS and BM25.
+    
+    RRF is a principled, parameter-free fusion method that combines ranked lists from
+    multiple retrieval systems by using ranks instead of raw scores. This avoids the
+    need for ad-hoc weighting between FAISS and BM25 scores.
+    """
+    print(f"--- [EVAL] Running Retrieval (RRF Fusion, k={RRF_FUSION_K}) ---")
+    
+    # First, run the standard retrieval to get rag_chunks_details and trigger web research
+    retrieval_data = query_processor.run_retrieval(
+        query=query,
+        batch_id=batch_id,
+        user_profile=user_profile,
+        skip_expansion=False,
+        top_k=RETRIEVAL_CANDIDATE_POOL,
+        allow_web_research=USE_WEB_RESEARCH,
+    )
+    
+    # Now apply RRF-based fusion at the search engine level
+    try:
+        search_engine = query_processor.search_engine
+        if search_engine and hasattr(search_engine, 'hybrid_search_rrf'):
+            print("  Using RRF fusion instead of weighted combination")
+            # Apply the configured promotion order (if any) so callers can control
+            # whether Faiss or BM25 gets preference when promoting items into the
+            # top-k. Default is 'faiss,bm25'.
+            if hasattr(search_engine.hybrid_search_rrf, '__call__'):
+                try:
+                    rrf_results = search_engine.hybrid_search_rrf(
+                        query=query,
+                        top_k=RETRIEVAL_CANDIDATE_POOL,
+                        k=RRF_FUSION_K,
+                        ensure_top_sources=True,
+                        promote_order=[p.strip() for p in RRF_PROMOTE_ORDER.split(',') if p.strip()],
+                        force=RRF_FORCE,
+                        faiss_confidence_threshold=RRF_FAISS_CONFIDENCE_THRESHOLD,
+                    )
+                except TypeError:
+                    # Older versions of the method might not accept 'promote_order'
+                    # so fall back to calling without it (backwards compatible).
+                    rrf_results = search_engine.hybrid_search_rrf(
+                        query=query,
+                        top_k=RETRIEVAL_CANDIDATE_POOL,
+                        k=RRF_FUSION_K,
+                        ensure_top_sources=True,
+                        force=RRF_FORCE,
+                        faiss_confidence_threshold=RRF_FAISS_CONFIDENCE_THRESHOLD,
+                    )
+            
+            # Convert RRF results to rag_chunks_details format
+            rag_chunks = []
+            for rrf_result in rrf_results:
+                chunk = {
+                    "content": rrf_result.get("content", ""),
+                    "metadata": rrf_result.get("metadata", {}),
+                    "score": rrf_result.get("score", 0.0),
+                    "source": "rrf",
+                    "rrf_score": rrf_result.get("score", 0.0),
+                }
+                rag_chunks.append(chunk)
+            
+            # Limit to generation budget
+            rag_chunks = rag_chunks[:GENERATION_TOP_K]
+            retrieval_data["rag_chunks_details"] = rag_chunks
+            retrieval_data["rag_contexts_list"] = [c.get("content", "") for c in rag_chunks]
+            
+            print(f"RRF fusion produced {len(rag_chunks)} final chunks for generation")
+        else:
+            print("  Warning: RRF method not available, falling back to baseline")
+            
+    except Exception as e:
+        print(f"  Warning: RRF fusion failed ({e}), using baseline results")
+        # Fallback to baseline: just apply generation_top_k limit
+        retrieval_data["rag_chunks_details"] = retrieval_data.get("rag_chunks_details", [])[:GENERATION_TOP_K]
+        retrieval_data["rag_contexts_list"] = retrieval_data.get("rag_contexts_list", [])[:GENERATION_TOP_K]
+    
+    return retrieval_data
+
+
 def run_retrieval_docs_full(
     query_processor: QueryProcessor,
     query: str,
@@ -576,6 +690,246 @@ ANSWER:"""
     return final_retrieval
 
 
+def run_retrieval_advanced_fusion(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Advanced multi-source fusion: HyDE + 3-source RRF + cross-encoder reranking.
+    
+    Pipeline:
+    1. Generate grounded HyDE answer
+    2. Retrieve from 3 sources: FAISS(original), FAISS(HyDE), BM25(original)
+    3. Apply RRF fusion across all 3 sources
+    4. Cross-encoder rerank the fused candidates
+    5. Return top-k for generation
+    """
+    print("--- [EVAL] Running Retrieval (ADVANCED FUSION) ---")
+    
+    # Step 1: Generate grounded HyDE answer
+    print("  Step 1: Generating grounded HyDE answer...")
+    hyde_data = run_retrieval_grounded_hyde(query_processor, query, batch_id, user_profile)
+    hyde_answer = hyde_data.get("hyde_answer")
+    
+    if not hyde_answer:
+        print("  No HyDE answer generated. Falling back to combined_best.")
+        return run_retrieval_combined_best(query_processor, query, batch_id, user_profile)
+    
+    print(f"  HyDE answer: {hyde_answer[:80]}...")
+    
+    # Step 2: Multi-source retrieval
+    print("  Step 2: Retrieving from 3 sources (FAISS-orig, FAISS-HyDE, BM25-orig)...")
+    se = query_processor.search_engine
+    if not se or not se.faiss_index or not se.bm25_index:
+        print("  Search engine not ready. Falling back.")
+        return hyde_data
+    
+    candidate_k = RETRIEVAL_CANDIDATE_POOL
+    
+    # Get results from each source
+    faiss_orig = se._faiss_search(query, candidate_k)
+    faiss_hyde = se._faiss_search(hyde_answer, candidate_k)
+    bm25_orig = se._bm25_search(query, candidate_k)
+    
+    # Step 3: RRF fusion across 3 sources
+    print("  Step 3: Applying 3-source RRF fusion...")
+    k = RRF_FUSION_K
+    
+    # Build rank maps for each source
+    def build_rank_map(results):
+        rank_map = {}
+        content_map = {}
+        for i, r in enumerate(results):
+            content = r.get("content")
+            if content:
+                rank_map[content] = i
+                content_map[content] = r
+        return rank_map, content_map
+    
+    faiss_orig_ranks, faiss_orig_map = build_rank_map(faiss_orig)
+    faiss_hyde_ranks, faiss_hyde_map = build_rank_map(faiss_hyde)
+    bm25_orig_ranks, bm25_orig_map = build_rank_map(bm25_orig)
+    
+    # Collect all unique content
+    all_content = set(faiss_orig_ranks.keys()) | set(faiss_hyde_ranks.keys()) | set(bm25_orig_ranks.keys())
+    
+    # Calculate RRF scores
+    rrf_scores = {}
+    for content in all_content:
+        rank_fo = faiss_orig_ranks.get(content, len(faiss_orig))
+        rank_fh = faiss_hyde_ranks.get(content, len(faiss_hyde))
+        rank_bo = bm25_orig_ranks.get(content, len(bm25_orig))
+        
+        rrf_score = (
+            (1.0 / (k + rank_fo + 1)) +
+            (1.0 / (k + rank_fh + 1)) +
+            (1.0 / (k + rank_bo + 1))
+        )
+        rrf_scores[content] = rrf_score
+    
+    # Sort by RRF score and build result list
+    sorted_content = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    fused_results = []
+    for content, rrf_score in sorted_content:
+        # Get metadata from any source that has this content
+        if content in faiss_orig_map:
+            metadata = faiss_orig_map[content].get("metadata", {})
+            source = "faiss_orig"
+        elif content in faiss_hyde_map:
+            metadata = faiss_hyde_map[content].get("metadata", {})
+            source = "faiss_hyde"
+        else:
+            metadata = bm25_orig_map[content].get("metadata", {})
+            source = "bm25_orig"
+        
+        fused_results.append({
+            "content": content,
+            "score": rrf_score,
+            "source": source,
+            "metadata": metadata,
+        })
+    
+    # Take top candidates for reranking
+    top_m = min(20, len(fused_results))
+    fused_top = fused_results[:top_m]
+    print(f"  RRF fusion: {len(fused_results)} total → keeping top {top_m} for reranking")
+    
+    # Step 4: Cross-encoder reranking
+    print("  Step 4: Cross-encoder reranking...")
+    passages = [{"id": i, "text": r["content"]} for i, r in enumerate(fused_top)]
+    
+    try:
+        reranked = reranker_manager.rerank(query, passages)
+        reranked_list = list(reranked) if not isinstance(reranked, list) else reranked
+        
+        # Map back to original chunks
+        final_chunks = []
+        for item in reranked_list[:RERANK_KEEP_TOP_N]:
+            idx = int(item.get("id")) if item.get("id") is not None else None
+            if idx is not None and idx < len(fused_top):
+                chunk = fused_top[idx].copy()
+                chunk["rerank_score"] = item.get("score")
+                final_chunks.append(chunk)
+        
+        print(f"  Reranked to {len(final_chunks)} chunks")
+        
+    except Exception as e:
+        print(f"  Warning: Reranking failed ({e}). Using RRF results.")
+        final_chunks = fused_top[:GENERATION_TOP_K]
+    
+    # Return standard retrieval data format
+    return {
+        "rag_chunks_details": final_chunks,
+        "rag_contexts_list": [c.get("content", "") for c in final_chunks],
+        "web_contexts_list": [],
+        "web_research_raw": {},
+        "hyde_answer": hyde_answer,
+    }
+
+
+def _apply_hyde_rerank(
+    query_processor: QueryProcessor,
+    query: str,
+    hyde_retrieval: Dict[str, Any],
+    rag_chunks_override: Optional[List[Dict[str, Any]]] = None,
+    label: str = "Combined Best"
+) -> Dict[str, Any]:
+    """Apply FlashRank reranking to HyDE retrieval results, optionally overriding chunks."""
+
+    rag_chunks = rag_chunks_override if rag_chunks_override is not None else hyde_retrieval.get("rag_chunks_details", [])
+
+    if not rag_chunks:
+        print("  No chunks from HyDE retrieval. Returning results as-is.")
+        return hyde_retrieval
+
+    hyde_answer = hyde_retrieval.get("hyde_answer") if isinstance(hyde_retrieval, dict) else None
+    rerank_query = hyde_answer if hyde_answer else query
+    print(f"  Using rerank query: {'HyDE answer' if hyde_answer else 'original query'}")
+
+    passages = [{"id": i, "text": chunk.get("content", "")} for i, chunk in enumerate(rag_chunks)]
+
+    try:
+        if hyde_answer:
+            try:
+                reranked_hyde = reranker_manager.rerank(hyde_answer, passages)
+                reranked_orig = reranker_manager.rerank(query, passages)
+                reranked_hyde_list = list(reranked_hyde)
+                reranked_orig_list = list(reranked_orig)
+            except Exception as e:
+                print(f"  Warning: Dual re-ranker call failed ({e}). Falling back to single rerank.")
+                reranked = reranker_manager.rerank(rerank_query, passages)
+                try:
+                    reranked_list = list(reranked)
+                except Exception:
+                    reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+            else:
+                score_h = {
+                    int(item.get('id')): float(item.get('score')) if isinstance(item, dict) and item.get('score') is not None else 0.0
+                    for item in reranked_hyde_list if isinstance(item, dict) and item.get('id') is not None
+                }
+                score_o = {
+                    int(item.get('id')): float(item.get('score')) if isinstance(item, dict) and item.get('score') is not None else 0.0
+                    for item in reranked_orig_list if isinstance(item, dict) and item.get('id') is not None
+                }
+
+                try:
+                    alpha = float(os.getenv("RERANK_HYDE_WEIGHT", "0.6"))
+                except Exception:
+                    alpha = 0.6
+
+                combined_scores = {}
+                for pid in set(list(score_h.keys()) + list(score_o.keys())):
+                    combined_scores[pid] = alpha * score_h.get(pid, 0.0) + (1.0 - alpha) * score_o.get(pid, 0.0)
+
+                reranked_list = [
+                    {"id": pid, "score": combined_scores[pid]}
+                    for pid in sorted(combined_scores.keys(), key=lambda x: combined_scores[x], reverse=True)
+                ]
+        else:
+            reranked = reranker_manager.rerank(rerank_query, passages)
+            try:
+                reranked_list = list(reranked)
+            except Exception:
+                reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+    except Exception as e:
+        print(f"  Warning: Re-ranker failed ({e}). Skipping re-ranking.")
+        return hyde_retrieval
+
+    rerank_info = {}
+    for rank_pos, item in enumerate(reranked_list, start=1):
+        idx = item.get('id') if isinstance(item, dict) else None
+        score = item.get('score') if isinstance(item, dict) and 'score' in item else None
+        if idx is None:
+            continue
+        score_value = float(score) if score is not None and hasattr(score, '__float__') else score
+        rerank_info[int(idx)] = {"rerank_score": score_value, "rerank_rank": rank_pos}
+
+    for i, chunk in enumerate(rag_chunks):
+        info = rerank_info.get(i, {})
+        chunk['rerank_score'] = info.get('rerank_score')
+        chunk['rerank_rank'] = info.get('rerank_rank')
+
+    keep_n = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else 5
+    if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0:
+        keep_n = min(keep_n, RERANK_KEEP_TOP_N)
+
+    top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
+    reranked_indices = {int(i) for i in top_ids if i is not None}
+
+    final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
+    generation_limit = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else None
+    final_rag_chunks = _merge_chunk_lists(final_rag_chunks, rag_chunks, max_chunks=generation_limit)
+
+    hyde_retrieval["rag_chunks_details"] = final_rag_chunks
+    hyde_retrieval["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
+    hyde_retrieval["rerank_info"] = rerank_info
+
+    print(f"  {label}: Grounded HyDE supplied {len(rag_chunks)} chunks, re-ranked to {len(final_rag_chunks)} chunks.")
+    return hyde_retrieval
+
+
 def run_retrieval_combined_best(
     query_processor: QueryProcessor,
     query: str,
@@ -599,113 +953,67 @@ def run_retrieval_combined_best(
     # STEP 1-3: Run Grounded HyDE to get improved retrieval results
     print("  Phase 1: Running Grounded HyDE...")
     hyde_retrieval = run_retrieval_grounded_hyde(query_processor, query, batch_id, user_profile)
-    
+
     # STEP 4: Apply re-ranking to the HyDE results
     print("  Phase 2: Applying re-ranking to HyDE results...")
-    rag_chunks = hyde_retrieval.get("rag_chunks_details", [])
-    
-    if not rag_chunks:
-        print("  No chunks from HyDE retrieval. Returning HyDE results as-is.")
-        return hyde_retrieval
-    
-    # Prefer re-ranking using the HyDE-grounded answer (if available). This keeps
-    # the reranker aligned with the retrieval signal that produced the candidate
-    # pool. Fall back to the original query if HyDE didn't produce an answer.
-    hyde_answer = hyde_retrieval.get("hyde_answer") if isinstance(hyde_retrieval, dict) else None
-    rerank_query = hyde_answer if hyde_answer else query
-    print(f"  Using rerank query: {'HyDE answer' if hyde_answer else 'original query'}")
+    return _apply_hyde_rerank(query_processor, query, hyde_retrieval)
 
-    passages = [{"id": i, "text": chunk.get("content", "")} for i, chunk in enumerate(rag_chunks)]
-    
+
+def run_retrieval_combined_best_rrf(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Experiment: Combined Best + RRF augmentation before reranking."""
+
+    print("--- [EVAL] Running Retrieval (COMBINED BEST + RRF) ---")
+    print("  Phase 1: Running Grounded HyDE...")
+    hyde_retrieval = run_retrieval_grounded_hyde(query_processor, query, batch_id, user_profile)
+
+    base_chunks = hyde_retrieval.get("rag_chunks_details", []) or []
+    augmented_chunks = list(base_chunks)
+    rrf_chunks: List[Dict[str, Any]] = []
+
     try:
-        # If we have a HyDE answer, use a hybrid reranking strategy:
-        # - rerank with the HyDE answer AND the original query
-        # - combine the two rerank scores (weighted) to produce a final ranking
-        if hyde_answer:
-            try:
-                reranked_hyde = reranker_manager.rerank(hyde_answer, passages)
-                reranked_orig = reranker_manager.rerank(query, passages)
-                reranked_hyde_list = list(reranked_hyde)
-                reranked_orig_list = list(reranked_orig)
-            except Exception as e:
-                # If the dual call fails for any reason, fall back to single rerank
-                print(f"  Warning: Dual re-ranker call failed ({e}). Falling back to single rerank.")
-                reranked = reranker_manager.rerank(rerank_query, passages)
-                try:
-                    reranked_list = list(reranked)
-                except Exception:
-                    reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
-            else:
-                # Build score maps (default missing scores to 0.0)
-                score_h = {
-                    int(item.get('id')): float(item.get('score')) if isinstance(item, dict) and item.get('score') is not None else 0.0
-                    for item in reranked_hyde_list if isinstance(item, dict) and item.get('id') is not None
-                }
-                score_o = {
-                    int(item.get('id')): float(item.get('score')) if isinstance(item, dict) and item.get('score') is not None else 0.0
-                    for item in reranked_orig_list if isinstance(item, dict) and item.get('id') is not None
-                }
-
-                # Combine scores using a weight (favor HyDE by default). Configurable via env var.
-                try:
-                    alpha = float(os.getenv("RERANK_HYDE_WEIGHT", "0.6"))
-                except Exception:
-                    alpha = 0.6
-
-                combined_scores = {}
-                for pid in set(list(score_h.keys()) + list(score_o.keys())):
-                    combined_scores[pid] = alpha * score_h.get(pid, 0.0) + (1.0 - alpha) * score_o.get(pid, 0.0)
-
-                # Create a reranked list sorted by combined score (desc)
-                reranked_list = [
-                    {"id": pid, "score": combined_scores[pid]}
-                    for pid in sorted(combined_scores.keys(), key=lambda x: combined_scores[x], reverse=True)
-                ]
+        search_engine = getattr(query_processor, "search_engine", None)
+        if search_engine and hasattr(search_engine, "hybrid_search_rrf"):
+            print(f"  Augmenting with RRF fusion results (top {COMBINED_RRF_TOP_M})...")
+            # Prefer the grounded HyDE answer for the RRF query so RRF can
+            # enrich the HyDE-derived context set only when needed.
+            query_for_rrf = hyde_retrieval.get("hyde_answer") or query
+            rrf_results = search_engine.hybrid_search_rrf(
+                query=query_for_rrf,
+                top_k=RETRIEVAL_CANDIDATE_POOL,
+                k=RRF_FUSION_K,
+                ensure_top_sources=True,
+                promote_order=[p.strip() for p in RRF_PROMOTE_ORDER.split(',') if p.strip()],
+                force=RRF_FORCE,
+                faiss_confidence_threshold=RRF_FAISS_CONFIDENCE_THRESHOLD,
+            )
+            for entry in rrf_results[:COMBINED_RRF_TOP_M]:
+                rrf_chunks.append({
+                    "content": entry.get("content", ""),
+                    "metadata": entry.get("metadata", {}),
+                    "score": entry.get("score"),
+                    "source": entry.get("source", "rrf"),
+                    "rrf_score": entry.get("score"),
+                    "fusion_rank": entry.get("rank"),
+                })
+            if rrf_chunks:
+                augmented_chunks = _merge_chunk_lists(base_chunks, rrf_chunks, max_chunks=RETRIEVAL_CANDIDATE_POOL)
+                print(f"  Appended {len(rrf_chunks)} RRF chunks (candidate pool now {len(augmented_chunks)}).")
         else:
-            reranked = reranker_manager.rerank(rerank_query, passages)
-            try:
-                reranked_list = list(reranked)
-            except Exception:
-                reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+            print("  Warning: Search engine missing RRF support; skipping augmentation.")
     except Exception as e:
-        print(f"  Warning: Re-ranker failed ({e}). Skipping re-ranking.")
-        return hyde_retrieval
-    
-    # Map rerank info back to chunks
-    rerank_info = {}
-    for rank_pos, item in enumerate(reranked_list, start=1):
-        idx = item.get('id') if isinstance(item, dict) else None
-        score = item.get('score') if isinstance(item, dict) and 'score' in item else None
-        if idx is None:
-            continue
-        score_value = float(score) if score is not None and hasattr(score, '__float__') else score
-        rerank_info[int(idx)] = {"rerank_score": score_value, "rerank_rank": rank_pos}
-    
-    # Attach rerank metadata
-    for i, chunk in enumerate(rag_chunks):
-        info = rerank_info.get(i, {})
-        chunk['rerank_score'] = info.get('rerank_score')
-        chunk['rerank_rank'] = info.get('rerank_rank')
-    
-    # Keep top-k reranked chunks
-    keep_n = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else 5
-    if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0:
-        keep_n = min(keep_n, RERANK_KEEP_TOP_N)
-    
-    top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
-    reranked_indices = {int(i) for i in top_ids if i is not None}
-    
-    final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
-    generation_limit = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else None
-    final_rag_chunks = _merge_chunk_lists(final_rag_chunks, rag_chunks, max_chunks=generation_limit)
+        print(f"  Warning: Failed to augment with RRF ({e}). Proceeding with HyDE chunks only.")
+        augmented_chunks = base_chunks
 
-    # Update retrieval data
-    hyde_retrieval["rag_chunks_details"] = final_rag_chunks
-    hyde_retrieval["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
-    hyde_retrieval["rerank_info"] = rerank_info
-    
-    print(f"  Combined Best: Grounded HyDE retrieved {len(rag_chunks)} chunks, re-ranked to {len(final_rag_chunks)} chunks.")
-    return hyde_retrieval
+    hyde_retrieval["rag_chunks_details"] = augmented_chunks
+    hyde_retrieval["rag_contexts_list"] = [c.get("content", "") for c in augmented_chunks]
+
+    print("  Phase 2: Applying reranking to augmented HyDE results...")
+    return _apply_hyde_rerank(query_processor, query, hyde_retrieval, rag_chunks_override=augmented_chunks, label="Combined Best + RRF")
 
 
 # =========================================================================
@@ -772,14 +1080,26 @@ def run_pipeline(
     elif experiment_name == "reranking":
         retrieval_func = run_retrieval_rerank
         generation_func = run_generation_baseline
+    elif experiment_name == "rrf":
+        retrieval_func = run_retrieval_rrf
+        generation_func = run_generation_baseline
     elif experiment_name == "grounded_hyde":
         retrieval_func = run_retrieval_grounded_hyde
         generation_func = run_generation_baseline
     elif experiment_name == "combined_best":
         retrieval_func = run_retrieval_combined_best
         generation_func = run_generation_baseline
+    elif experiment_name == "combined_best_rrf":
+        retrieval_func = run_retrieval_combined_best_rrf
+        generation_func = run_generation_baseline
+    elif experiment_name == "advanced_fusion":
+        retrieval_func = run_retrieval_advanced_fusion
+        generation_func = run_generation_baseline
     elif experiment_name == "semantic_chunking":
         retrieval_func = run_retrieval_semantic_chunking
+        generation_func = run_generation_baseline
+    elif experiment_name == "semantic_reranking":
+        retrieval_func = run_retrieval_semantic_rerank
         generation_func = run_generation_baseline
     else:
         raise ValueError(f"Unknown experiment: {experiment_name}")
@@ -925,41 +1245,18 @@ def run_retrieval_semantic_chunking(
     semantic_meta_path = Path("batches") / semantic_batch_id / "metadata.json"
     batch_meta_path = Path("batches") / batch_id / "metadata.json"
 
-    # If semantic batch doesn't exist, attempt to create it using the same documents as the original batch
+    # If semantic batch doesn't exist, do not create one at runtime.
+    # This experiment relies on a precomputed semantic batch. Please run
+    # `python create_semantic_batch.py` before running this experiment.
     if not semantic_meta_path.exists():
         if not batch_meta_path.exists():
             print(f"Original batch metadata not found: {batch_meta_path}. Falling back to baseline retrieval.")
             return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
 
-        try:
-            with open(batch_meta_path, 'r') as f:
-                meta = json.load(f)
-            doc_entries = meta.get('documents', [])
-            doc_paths = [d.get('file_path') for d in doc_entries if d.get('file_path')]
-
-            from document_processor import DocumentProcessor
-            dp = DocumentProcessor()
-
-            print(f"Creating semantic-chunked batch '{semantic_batch_id}' from original documents...")
-            success = dp.create_batch(
-                batch_id=semantic_batch_id,
-                document_paths=doc_paths,
-                batch_name=f"{meta.get('name', semantic_batch_id)} (Semantic)",
-                description="Semantic-chunked batch created for evaluation (header-aware chunking)",
-                embedding_model_name="text-embedding-3-small",
-                embedding_dimension=1536,
-                chunking_strategy="semantic"
-            )
-
-            if not success:
-                print("Failed to create semantic batch. Falling back to baseline retrieval.")
-                return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
-
-            print(f"Semantic batch '{semantic_batch_id}' created.")
-
-        except Exception as e:
-            print(f"Error creating semantic batch: {e}")
-            return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
+        # Do not attempt to create the semantic batch at runtime. Instead return
+        # baseline retrieval and instruct the operator to run the pre-run tool.
+        print(f"Semantic batch '{semantic_batch_id}' not found. Please create it using 'python create_semantic_batch.py' or use 'setup_batch.py' to precompute semantic chunks.")
+        return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
 
     # Ensure the query processor loads the semantic batch
     if not query_processor._ensure_batch_loaded(semantic_batch_id):
@@ -975,6 +1272,74 @@ def run_retrieval_semantic_chunking(
         top_k=RETRIEVAL_CANDIDATE_POOL,
         allow_web_research=USE_WEB_RESEARCH,
     )
+
+
+def run_retrieval_semantic_rerank(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Experiment: semantic-chunking + reranking.
+
+    Creates (if needed) a semantic-chunked batch and then runs the FlashRank
+    re-ranker over the top candidates. This combines both strategies.
+    """
+    print("--- [EVAL] Running Retrieval (SEMANTIC + RE-RANKING) ---")
+
+    # Run retrieval using semantic chunking (creates the semantic batch if needed)
+    retrieval_data = run_retrieval_semantic_chunking(query_processor, query, batch_id, user_profile)
+
+    # If no chunks, just return
+    rag_chunks = retrieval_data.get("rag_chunks_details", [])
+    if not rag_chunks:
+        return retrieval_data
+
+    passages = [{"id": i, "text": chunk.get("content", "")} for i, chunk in enumerate(rag_chunks)]
+
+    try:
+        reranked = reranker_manager.rerank(query, passages)
+    except Exception as e:
+        print(f"Warning: semantic rerank failed ({e}). Returning semantic retrieval only.")
+        return retrieval_data
+
+    try:
+        reranked_list = list(reranked)
+    except Exception:
+        reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+
+    rerank_info = {}
+    for rank_pos, item in enumerate(reranked_list, start=1):
+        idx = item.get('id') if isinstance(item, dict) else None
+        score = item.get('score') if isinstance(item, dict) and 'score' in item else None
+        if idx is None:
+            continue
+        score_value = float(score) if score is not None and hasattr(score, '__float__') else score
+        rerank_info[int(idx)] = {"rerank_score": score_value, "rerank_rank": rank_pos}
+
+    for i, chunk in enumerate(rag_chunks):
+        info = rerank_info.get(i, {})
+        chunk['rerank_score'] = info.get('rerank_score')
+        chunk['rerank_rank'] = info.get('rerank_rank')
+
+    keep_n = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else 5
+    if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0:
+        keep_n = min(keep_n, RERANK_KEEP_TOP_N)
+
+    top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
+    reranked_indices = {int(i) for i in top_ids if i is not None}
+
+    final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
+
+    generation_limit = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else None
+    final_rag_chunks = _merge_chunk_lists(final_rag_chunks, rag_chunks, max_chunks=generation_limit)
+
+    retrieval_data["rag_chunks_details"] = final_rag_chunks
+    retrieval_data["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
+    retrieval_data["rerank_info"] = rerank_info
+
+    print(f"Semantic retrieval returned {len(rag_chunks)} chunks; after rerank keep={len(final_rag_chunks)}")
+    return retrieval_data
 
 
 # =========================================================================
@@ -1189,7 +1554,8 @@ def save_results(
 
     # Ensure output directory exists
     timestamp = payload['metadata']['timestamp']
-    output_filename = f"evaluation/results/ragas_{experiment_name}_{batch_id}_{timestamp}.json"
+    readable_timestamp = datetime.strptime(timestamp, '%Y%m%d_%H%M%S').strftime('%Y-%m-%d_%H-%M-%S')
+    output_filename = f"evaluation/results/ragas_{experiment_name}_{batch_id}_{readable_timestamp}.json"
     Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_filename, 'w', encoding='utf-8') as f:
@@ -1238,7 +1604,11 @@ def save_aggregated_results(
 ) -> str:
     """Saves a single JSON containing multiple experiments."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_filename = f"evaluation/results/ragas_report_{batch_id}_{timestamp}.json"
+    readable_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    experiments = [payload['metadata'].get('experiment') for payload in payloads]
+    experiments_str = '+'.join(sorted(experiments))  # Sort for consistent ordering
+    
+    output_filename = f"evaluation/results/ragas_report_{batch_id}_{readable_time}_{experiments_str}.json"
     Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
 
     comparison_table = _build_metric_comparison_table(payloads)
@@ -1247,8 +1617,8 @@ def save_aggregated_results(
     aggregate = {
         'metadata': {
             'batch_id': batch_id,
-            'timestamp': timestamp,
-            'experiments': [payload['metadata'].get('experiment') for payload in payloads],
+            'timestamp': readable_time,  # Use readable format in metadata too
+            'experiments': experiments,
             'dataset': EVAL_DATASET_PATH,
             'runner_args': runner_args,
         },
@@ -1520,7 +1890,7 @@ def run_ragas_evaluation(
     # If we reach here, all attempts failed — write debug artifact
     debug_dir = Path("evaluation/results")
     debug_dir.mkdir(parents=True, exist_ok=True)
-    debug_file = debug_dir / f"ragas_evaluator_debug_{experiment_name}_{batch_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    debug_file = debug_dir / f"ragas_evaluator_debug_{experiment_name}_{batch_id}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
     debug_payload = {
         "error": str(last_exception),
         "attempts": attempts,
