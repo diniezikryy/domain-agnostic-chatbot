@@ -165,6 +165,23 @@ class FileHandler:
             # Fallback to smaller chunks if none produced
             if not final:
                 return self._create_chunks(text)
+            # If a page contains a table-like structure, prefer to keep
+            # the page intact to avoid breaking the logical table into
+            # smaller chunks which can harm retrieval of numeric limits.
+            if self._is_table_like(text):
+                # For small tables, keep the entire page to preserve table context.
+                if len(text) <= max_chars * 3:
+                    return [text], "page"
+
+                # For very large tables (risking embedding token limits) split
+                # into smaller sub-chunks that still preserve the header.
+                splitted = self._split_table_into_chunks(text, rows_per_chunk=8)
+                if splitted:
+                    return splitted, "page"
+
+                # Fallback: create fixed-size chunks to ensure we don't send
+                # an over-sized prompt to the embedding model.
+                return self._create_chunks(text)
             return final, "semantic"
 
         except Exception:
@@ -176,7 +193,11 @@ class FileHandler:
             MIN_CHUNK_CHARS = 50
             has_headers = re.search(r'^#{1,6}\s+', text, re.MULTILINE)
             if not has_headers:
-                # No headers, use fixed chunking to avoid giant chunks
+                # No headers, but check for table-like pages first. If a
+                # table is present, prefer page chunking to preserve
+                # table/row integrity; otherwise, use fixed chunking.
+                if self._is_table_like(text):
+                    return [text], "page"
                 return self._create_chunks(text)
 
             chunks = []
@@ -211,8 +232,108 @@ class FileHandler:
                     final_chunks.extend(sub_chunks)
                 else:
                     final_chunks.append(chunk)
+            # Table-aware semantic chunking: if a markdown-like table appears
+            # on the page we prefer to return the whole page as a single
+            # "page" chunk to preserve table context.
+            if self._is_table_like(text):
+                # Same logic as above for fallback path
+                if len(text) <= MAX_CHUNK_CHARS * 3:
+                    return [text], "page"
+                splitted = self._split_table_into_chunks(text, rows_per_chunk=8)
+                if splitted:
+                    return splitted, "page"
+                return self._create_chunks(text)
 
             return final_chunks, "semantic"
+
+    def _is_table_like(self, text: str) -> bool:
+        """Heuristic: detect a markdown-style table or pipe-delimited table.
+
+        We look for multiple pipe characters forming rows and an optional
+        separation row containing dashes. If detected, we prefer page-level
+        chunking for that page to avoid breaking the table.
+        """
+        lines = [l for l in text.splitlines() if l.strip()]
+        if not lines:
+            return False
+
+        # Count lines that appear to be pipe-delimited
+        pipe_lines = [l for l in lines if '|' in l and len(l.strip()) > 3]
+        if len(pipe_lines) >= 3:
+            # If we see a header separator (| --- |) then it's likely a table
+            for l in pipe_lines:
+                if re.search(r'\|\s*-{3,}\s*\|', l):
+                    return True
+            # Otherwise, many pipe lines is a good signal of a table
+            return True
+
+        # Also look for a typical CSV-looking row with many commas but not
+        # too many punctuation characters, which could also be a table.
+        comma_lines = [l for l in lines if ',' in l and len(l.split(',')) >= 3]
+        if len(comma_lines) >= 3:
+            return True
+
+        # Check for simple tabular English patterns like 'per day' + currency
+        # pair repeated (S$ or $ repeated) which often indicates a table
+        if re.search(r'(S\$|\$)\s*\d', text) and ('|' in text or ',' in text):
+            return True
+
+        return False
+
+    def _split_table_into_chunks(self, text: str, rows_per_chunk: int = 10) -> List[str]:
+        """Split a large table-like page into smaller chunks while preserving header.
+
+        This preserves the header row for each sub-chunk so the LLM has the
+        table structure and meaning for each partial table. This is used as a
+        fallback when a page contains a very large table that would exceed
+        embedding model token limits when kept as a single chunk.
+        """
+        lines = text.splitlines()
+        # Find all lines that look like table rows
+        pipe_lines = [l for l in lines if '|' in l and len(l.strip()) > 3]
+        if not pipe_lines:
+            return []
+
+        # Identify the first pipe-line to use as header candidate
+        header_idx = next((i for i, l in enumerate(lines) if '|' in l and len(l.strip()) > 3), None)
+        if header_idx is None:
+            return []
+
+        # Optionally include the separator line if present
+        separator_idx = header_idx + 1 if header_idx + 1 < len(lines) and re.search(r"\|\s*-{3,}", lines[header_idx + 1]) else None
+
+        # Collect the table rows (we maintain the order in the original document)
+        table_row_indices = [i for i, l in enumerate(lines) if '|' in l and len(l.strip()) > 3]
+        table_rows = [lines[i] for i in table_row_indices]
+
+        # Partition table rows into reasonably sized groups
+        groups = [table_rows[i:i + rows_per_chunk] for i in range(0, len(table_rows), rows_per_chunk)]
+
+        chunks = []
+        # Include some minimal pre-table context to help the LLM (the few lines before header)
+        preamble_window = max(0, header_idx - 3)
+        preamble = '\n'.join(lines[preamble_window:header_idx]).strip()
+
+        header_lines = []
+        header_lines.append(lines[header_idx])
+        if separator_idx is not None:
+            header_lines.append(lines[separator_idx])
+
+        header_text = '\n'.join(header_lines).strip()
+
+        for group in groups:
+            chunk_parts = []
+            if preamble:
+                chunk_parts.append(preamble)
+            if header_text:
+                chunk_parts.append(header_text)
+            chunk_parts.extend(group)
+            chunk_text = '\n'.join(chunk_parts).strip()
+            if chunk_text:
+                chunks.append(chunk_text)
+
+        # If we couldn't split correctly, return empty to signal fallback
+        return chunks if chunks else []
 
     def _create_chunks(self, text: str) -> Tuple[List[str], str]:
         if len(text) <= self.chunk_size:

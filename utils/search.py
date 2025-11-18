@@ -186,13 +186,15 @@ class HybridSearchEngine:
             print(f"Error loading BM25 index: {e}")
             return False
 
-    def hybrid_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def hybrid_search(self, query: str, top_k: int = 10, faiss_weight: Optional[float] = None, bm25_weight: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         Perform hybrid search combining FAISS and BM25 results.
 
         Args:
             query: Search query string
             top_k: Number of results to return
+            faiss_weight: Optional weight for FAISS results
+            bm25_weight: Optional weight for BM25 results
         """
         if not self.faiss_index or not self.bm25_index:
             print("Indexes not loaded")
@@ -205,8 +207,8 @@ class HybridSearchEngine:
             # Get BM25 results (keyword search)
             bm25_results = self._bm25_search(query, top_k)
 
-            # Combine and rank results
-            combined_results = self._combine_results(faiss_results, bm25_results, top_k)
+            # Combine and rank results with weights
+            combined_results = self._combine_results(faiss_results, bm25_results, top_k, faiss_weight=faiss_weight, bm25_weight=bm25_weight)
 
             return combined_results
 
@@ -291,12 +293,17 @@ class HybridSearchEngine:
             return []
 
     def _combine_results(
-        self, faiss_results: List[Dict], bm25_results: List[Dict], top_k: int
+        self, faiss_results: List[Dict], bm25_results: List[Dict], top_k: int, faiss_weight: Optional[float] = None, bm25_weight: Optional[float] = None
     ) -> List[Dict[str, Any]]:
-        """Combine FAISS and BM25 results with weighted scoring."""
-        # Weight factors (can be tuned)
-        faiss_weight = 0.3
-        bm25_weight = 0.7
+        """Combine FAISS and BM25 results with weighted scoring.
+
+        faiss_weight and bm25_weight default to 0.3 and 0.7 respectively if not provided.
+        """
+        # Default weight factors (can be tuned)
+        if faiss_weight is None:
+            faiss_weight = 0.3
+        if bm25_weight is None:
+            bm25_weight = 0.7
 
         # Normalize scores
         if faiss_results:

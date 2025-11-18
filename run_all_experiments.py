@@ -147,6 +147,7 @@ def parse_args() -> argparse.Namespace:
         default=[
             "baseline",
             "reranking",
+            "rrf_reranking",
             "rrf",
             "grounded_hyde",
             "combined_best",

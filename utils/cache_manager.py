@@ -22,6 +22,10 @@ import gzip
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
+try:
+    import numpy as _np
+except Exception:
+    _np = None
 import time
 
 
@@ -90,6 +94,16 @@ class CacheManager:
         Returns:
             SHA256 hash as hex string
         """
+        # Append experiment-defining environment vars so cache keys reflect
+        # different retrieval/rafter/rerank settings. This avoids re-using
+        # stale results when evaluated with different parameters externally.
+        env_params = [
+            str(os.getenv("RETRIEVAL_CANDIDATE_POOL", "")),
+            str(os.getenv("RERANK_KEEP_TOP_N", "")),
+            str(os.getenv("RRF_FUSION_K", "")),
+            str(os.getenv("RERANK_HYDE_WEIGHT", "")),
+        ]
+
         # Create a stable string representation
         key_parts = [
             question.strip().lower(),
@@ -97,6 +111,9 @@ class CacheManager:
             experiment_name,
             user_profile_id or "no_profile"
         ]
+        # Add env-driven experiment parameters so the cache key matches
+        # the experiment run configuration.
+        key_parts.extend(env_params)
         key_string = "|".join(key_parts)
         
         # Hash it
@@ -220,6 +237,13 @@ class CacheManager:
             "generated_answer": generated_answer,
             "ragas_metrics": ragas_metrics,  # NEW: Cache RAGAS scores
             "metadata": metadata or {},
+            # Include the execution configuration that defines this experiment
+            "experiment_params": {
+                "retrieval_candidate_pool": os.getenv("RETRIEVAL_CANDIDATE_POOL", ""),
+                "rerank_keep_top_n": os.getenv("RERANK_KEEP_TOP_N", ""),
+                "rrf_fusion_k": os.getenv("RRF_FUSION_K", ""),
+                "rerank_hyde_weight": os.getenv("RERANK_HYDE_WEIGHT", ""),
+            },
             # Per-run timings (if provided) - useful to distinguish cold vs cached runs
             "retrieval_seconds": float(retrieval_seconds) if retrieval_seconds is not None else None,
             "generation_seconds": float(generation_seconds) if generation_seconds is not None else None,
@@ -229,13 +253,46 @@ class CacheManager:
         
         # Save to disk (with compression)
         cache_file = self.cache_dir / f"{cache_key}.json.gz" if self.compress else self.cache_dir / f"{cache_key}.json"
+        # Convert any non-JSON-serializable types (numpy floats, ints, arrays, datetimes etc.)
+        def _sanitize(obj):
+            # Fast-paths for very common types
+            if obj is None or isinstance(obj, (str, bool, int, float)):
+                return obj
+            # Numpy scalars/arrays
+            if _np is not None:
+                if isinstance(obj, _np.generic):
+                    try:
+                        return obj.item()
+                    except Exception:
+                        return float(obj)
+                if isinstance(obj, _np.ndarray):
+                    return obj.tolist()
+            # Datetimes
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            # Recurse for lists/tuples
+            if isinstance(obj, list):
+                return [_sanitize(i) for i in obj]
+            if isinstance(obj, tuple):
+                return tuple(_sanitize(i) for i in obj)
+            if isinstance(obj, dict):
+                return {str(k): _sanitize(v) for k, v in obj.items()}
+            # Fallback to string representation
+            try:
+                return str(obj)
+            except Exception:
+                return None
+
+        safe_cache_entry = _sanitize(cache_entry)
+
         try:
+            # Always store sanitized entry to ensure JSON serializability
             if self.compress:
                 with gzip.open(cache_file, 'wt', encoding='utf-8') as f:
-                    json.dump(cache_entry, f, indent=2, ensure_ascii=False)
+                    json.dump(safe_cache_entry, f, indent=2, ensure_ascii=False)
             else:
                 with open(cache_file, 'w', encoding='utf-8') as f:
-                    json.dump(cache_entry, f, indent=2, ensure_ascii=False)
+                    json.dump(safe_cache_entry, f, indent=2, ensure_ascii=False)
             
             # Update index
             file_size = cache_file.stat().st_size
@@ -248,6 +305,8 @@ class CacheManager:
                 "file_size_bytes": file_size,
                 "has_ragas_metrics": ragas_metrics is not None
             }
+            # Expose experiment params in the index for quicker inspection
+            self.cache_index["entries"][cache_key]["experiment_params"] = cache_entry.get("experiment_params", {})
             self._save_index()
             
             self.saves += 1
@@ -311,12 +370,40 @@ class CacheManager:
         # Save back
         cache_file = self.cache_dir / f"{cache_key}.json.gz" if self.compress else self.cache_dir / f"{cache_key}.json"
         try:
+            # Sanitize cached_data for JSON
+            def _sanitize(obj):
+                if obj is None or isinstance(obj, (str, bool, int, float)):
+                    return obj
+                if _np is not None:
+                    if isinstance(obj, _np.generic):
+                        try:
+                            return obj.item()
+                        except Exception:
+                            return float(obj)
+                    if isinstance(obj, _np.ndarray):
+                        return obj.tolist()
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                if isinstance(obj, list):
+                    return [_sanitize(i) for i in obj]
+                if isinstance(obj, tuple):
+                    return tuple(_sanitize(i) for i in obj)
+                if isinstance(obj, dict):
+                    return {str(k): _sanitize(v) for k, v in obj.items()}
+                try:
+                    return str(obj)
+                except Exception:
+                    return None
+
+            safe_cached_data = _sanitize(cached_data)
+
+            # Always store sanitized data
             if self.compress:
                 with gzip.open(cache_file, 'wt', encoding='utf-8') as f:
-                    json.dump(cached_data, f, indent=2, ensure_ascii=False)
+                    json.dump(safe_cached_data, f, indent=2, ensure_ascii=False)
             else:
                 with open(cache_file, 'w', encoding='utf-8') as f:
-                    json.dump(cached_data, f, indent=2, ensure_ascii=False)
+                    json.dump(safe_cached_data, f, indent=2, ensure_ascii=False)
             
             # Update index
             if cache_key in self.cache_index["entries"]:

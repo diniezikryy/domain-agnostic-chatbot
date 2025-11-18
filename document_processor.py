@@ -77,11 +77,36 @@ class DocumentProcessor:
 
             print(f"Total raw chunks: {len(all_chunks_raw)}")
 
+            # Clean and prepare chunks: remove empty ones and split very large chunks
             all_chunks_clean = []
             all_metadata_clean = []
 
+            # Allow a maximum chunk length (characters) for embeddings —
+            # models have context limits; long page-style chunks (especially
+            # long tables / footnotes) can exceed embedding model limits.
+            MAX_CHARS_PER_CHUNK = int(os.getenv("MAX_CHARS_PER_CHUNK", "6000"))
+
             for chunk, meta in zip(all_chunks_raw, all_metadata_raw):
-                if chunk and chunk.strip(): # Check for None or empty strings
+                if not (chunk and chunk.strip()):
+                    continue
+
+                # If a chunk is larger than the configured threshold, split it
+                # using the fixed splitter to avoid embedding failures.
+                if isinstance(chunk, str) and len(chunk) > MAX_CHARS_PER_CHUNK:
+                    print(f"[WARN] Chunk size {len(chunk)} > {MAX_CHARS_PER_CHUNK} - splitting for embeddings")
+                    sub_chunks, _ = self.file_handler._create_chunks(chunk)
+                    for idx, sc in enumerate(sub_chunks):
+                        if sc and sc.strip():
+                            new_meta = dict(meta)
+                            # update the chunk id to reflect split
+                            base_id = meta.get("chunk_id", "unknown")
+                            new_meta["chunk_id"] = f"{base_id}-split-{idx}"
+                            new_meta["chunk_size"] = len(sc)
+                            new_meta["chunking_strategy"] = new_meta.get("chunking_strategy", "semantic") + "_split"
+
+                            all_chunks_clean.append(sc)
+                            all_metadata_clean.append(new_meta)
+                else:
                     all_chunks_clean.append(chunk)
                     all_metadata_clean.append(meta)
 

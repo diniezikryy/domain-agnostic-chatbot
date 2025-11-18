@@ -50,6 +50,8 @@ These environment variables are used by the harness to make experiments determin
 - `RETRIEVAL_CANDIDATE_POOL` — how many candidate chunks the retriever returns (e.g. 30 or 50)
 - `USE_WEB_RESEARCH` — `true` or `false`, controls whether external web research is allowed
 - `RERANK_KEEP_TOP_N` — when re-ranking is enabled, how many top chunks to keep for generation
+ - `RERANK_KEEP_TOP_N` — when re-ranking is enabled, how many top chunks to keep for generation
+ - rrf_reranking — new experiment that runs RRF fusion followed by re-ranking. Useful for table-heavy queries where an initial RRF fusion increases recall and re-ranking improves precision.
 - `GENERATION_TOP_K` — how many contexts the generator receives (defaults to the RAG budget)
 - `MAX_CONTEXTS_FOR_RAGAS` — number of contexts passed to RAGAS for evaluation (keeps the evaluator stable)
 - `ENABLE_TPM_THROTTLE` — set to `1` if you want the harness to insert fixed sleeps between questions; leave unset for the new default (retry-driven, no artificial delay).
@@ -101,6 +103,21 @@ After the run, aggregate the outputs using the helper script:
 & '.venv\Scripts\python.exe' setup_batch.py my_policies --rebuild
 ```
 
+## PowerShell tip: run multi-line Python safely
+
+If you need to run multi-line Python snippets from PowerShell (avoid shell redirection like `python - <<'PY'` which is not compatible), use this pattern to write and run a temporary script:
+
+```powershell
+$py = @'
+import json
+print(json.dumps({'message':'hello from python'}))
+'@
+Set-Content -Path debug_script.py -Value $py -Encoding UTF8
+& '.venv\Scripts\python.exe' debug_script.py
+```
+
+This avoids quoting pitfalls and is cross-version safe for PowerShell 5.1 and later.
+
 2. Inspect the batch to sanity-check chunking and metadata:
 
 ```powershell
@@ -112,6 +129,14 @@ After the run, aggregate the outputs using the helper script:
 ```powershell
 $env:RETRIEVAL_CANDIDATE_POOL='30'; & '.venv\Scripts\python.exe' run_evaluation.py --experiment semantic_chunking --batch_id my_policies --show_table
 ```
+
+Note: the `semantic_chunking` experiment now uses an RRF (Reciprocal Rank Fusion)
+fusion layer to combine FAISS and BM25 ranking lists. This approach often
+improves retrieval for table-heavy documents where lexical retrieval can
+prioritize header text over numeric table rows. Additionally, the ingest
+pipeline is table-aware: when a page looks like a Markdown or pipe-delimited
+table, the chunker will prefer to keep the page intact to preserve numeric
+limits and row context in a single chunk.
 
 ## Output files & where to look
 
@@ -133,6 +158,8 @@ Tip: Keep an experiment naming convention and always record the `RETRIEVAL_CANDI
 - "No OPENAI_API_KEY" — create a `.env` file or export `OPENAI_API_KEY` before running.
 - Web research missing: set `TAVILY_API_KEY` (if you want web research) or set `USE_WEB_RESEARCH=false`.
 - FAISS errors: make sure `faiss-cpu` (or `faiss-gpu`) is installed per `requirements.txt` and the batch indexes were built successfully.
+ - Cache key behavior: cache keys now include experiment-defining environment variables (e.g., `RETRIEVAL_CANDIDATE_POOL`, `RERANK_KEEP_TOP_N`, `RRF_FUSION_K`, `RERANK_HYDE_WEIGHT`). Changing these will produce a different cache key, avoiding stale runs using cached results from a previous configuration.
+ - Cache key behavior: cache keys now include experiment-defining environment variables (e.g., `RETRIEVAL_CANDIDATE_POOL`, `RERANK_KEEP_TOP_N`, `RRF_FUSION_K`, `RERANK_HYDE_WEIGHT`). Changing these will produce a different cache key, avoiding stale runs using cached results from a previous configuration. An integration test `tests/test_integration_cache.py` validates this by running a short evaluation twice with different env settings and asserting that different cache entries were created.
 
 ## Next steps & experiments
 

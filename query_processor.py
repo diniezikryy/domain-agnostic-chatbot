@@ -114,7 +114,7 @@ class QueryProcessor:
     # == NEW FUNCTIONS FOR RAGAS EVALUATION: Testable Retrieval & Generation ==
     # =========================================================================
 
-    def run_retrieval(self, query: str, batch_id: str, user_profile: Optional[Dict] = None, skip_expansion: bool = False, top_k: int = 50, allow_web_research: Optional[bool] = None) -> Dict[str, Any]:
+    def run_retrieval(self, query: str, batch_id: str, user_profile: Optional[Dict] = None, skip_expansion: bool = False, top_k: int = 50, allow_web_research: Optional[bool] = None, faiss_weight: Optional[float] = None, bm25_weight: Optional[float] = None) -> Dict[str, Any]:
         """
         Runs the full retrieval pipeline (intent, expansion, RAG, and web research).
         Returns a dictionary containing all retrieved contexts.
@@ -155,7 +155,7 @@ class QueryProcessor:
         # Use configurable top_k so the evaluation harness can control the
         # candidate pool size (important for fair experiments).
         raw_search_results = self.search_engine.hybrid_search(
-            query=expanded_query, top_k=top_k
+            query=expanded_query, top_k=top_k, faiss_weight=faiss_weight, bm25_weight=bm25_weight
         )
         unique_results = self._deduplicate_results(raw_search_results)
         

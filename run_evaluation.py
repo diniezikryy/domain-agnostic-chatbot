@@ -98,6 +98,7 @@ EXPERIMENT_CHOICES = [
     "combined_best_rrf",
     "semantic_chunking",
     "semantic_reranking",
+    "rrf_reranking",
     "advanced_fusion",
 ]
 
@@ -452,6 +453,81 @@ def run_retrieval_rrf(
         retrieval_data["rag_contexts_list"] = retrieval_data.get("rag_contexts_list", [])[:GENERATION_TOP_K]
     
     return retrieval_data
+
+
+def run_retrieval_rrf_rerank(
+    query_processor: QueryProcessor,
+    query: str,
+    batch_id: str,
+    user_profile: Optional[Dict]
+) -> Dict[str, Any]:
+    """Experiment: RRF fusion followed by a re-ranking step.
+
+    This experiment applies rank-based fusion to combine FAISS and BM25 ranked lists,
+    then runs the cross-encoder re-ranker over the fused candidate set to improve
+    context precision before generation.
+    """
+    print("--- [EVAL] Running Retrieval (RRF + RE-RANK) ---")
+
+    # 1. Run RRF fusion to get fused candidates
+    rrf_data = run_retrieval_rrf(query_processor, query, batch_id, user_profile)
+    rag_chunks = rrf_data.get("rag_chunks_details", []) or []
+
+    if not rag_chunks:
+        print("  No RRF results; falling back to baseline retrieval.")
+        return rrf_data
+
+    # 2. Build reranker passages from the fused results
+    passages = [{"id": i, "text": chunk.get("content", "")} for i, chunk in enumerate(rag_chunks)]
+
+    try:
+        reranked = reranker_manager.rerank(query, passages)
+    except Exception as e:
+        print(f"  Warning: re-ranker failed after RRF ({e}). Returning RRF-only results.")
+        return rrf_data
+
+    try:
+        reranked_list = list(reranked)
+    except Exception:
+        reranked_list = reranked if isinstance(reranked, (list, tuple)) else []
+
+    # Map rerank info back to each fused chunk
+    rerank_info = {}
+    for rank_pos, item in enumerate(reranked_list, start=1):
+        if not isinstance(item, dict):
+            continue
+        idx = item.get('id')
+        score = item.get('score') if 'score' in item else None
+        if idx is None:
+            continue
+        score_value = float(score) if score is not None and hasattr(score, '__float__') else score
+        rerank_info[int(idx)] = {"rerank_score": score_value, "rerank_rank": rank_pos}
+
+    # Attach rerank metadata to each fused chunk
+    for i, chunk in enumerate(rag_chunks):
+        info = rerank_info.get(i, {})
+        chunk['rerank_score'] = info.get('rerank_score')
+        chunk['rerank_rank'] = info.get('rerank_rank')
+
+    # Decide how many top-ranked chunks to keep.
+    keep_n = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else 5
+    if isinstance(RERANK_KEEP_TOP_N, int) and RERANK_KEEP_TOP_N > 0:
+        keep_n = min(keep_n, RERANK_KEEP_TOP_N)
+
+    top_ids = [item.get('id') for item in reranked_list[:keep_n] if isinstance(item, dict) and item.get('id') is not None]
+    reranked_indices = {int(i) for i in top_ids if i is not None}
+
+    final_rag_chunks = [c for i, c in enumerate(rag_chunks) if i in reranked_indices]
+    generation_limit = GENERATION_TOP_K if isinstance(GENERATION_TOP_K, int) and GENERATION_TOP_K > 0 else None
+    final_rag_chunks = _merge_chunk_lists(final_rag_chunks, rag_chunks, max_chunks=generation_limit)
+
+    rrf_data["rag_chunks_details"] = final_rag_chunks
+    rrf_data["rag_contexts_list"] = [c.get("content", "") for c in final_rag_chunks]
+    rrf_data["rerank_info"] = rerank_info
+
+    print(f"  RRF + rerank: coalesced {len(rag_chunks)} fused candidates → {len(final_rag_chunks)} final chunks (keep_n={keep_n})")
+
+    return rrf_data
 
 
 def run_retrieval_docs_full(
@@ -1025,7 +1101,8 @@ def run_pipeline(
     profiles_data: Dict,
     experiment_name: str,
     test_batch_id: str,
-    cache_manager: Optional[CacheManager] = None
+    cache_manager: Optional[CacheManager] = None,
+    stub_generation: bool = False,
 ) -> List[Dict]:
     """
     Runs the RAG pipeline for all test questions and collects results
@@ -1082,6 +1159,9 @@ def run_pipeline(
         generation_func = run_generation_baseline
     elif experiment_name == "rrf":
         retrieval_func = run_retrieval_rrf
+        generation_func = run_generation_baseline
+    elif experiment_name == "rrf_reranking":
+        retrieval_func = run_retrieval_rrf_rerank
         generation_func = run_generation_baseline
     elif experiment_name == "grounded_hyde":
         retrieval_func = run_retrieval_grounded_hyde
@@ -1148,10 +1228,16 @@ def run_pipeline(
                 retrieval_data = retrieval_func(query_processor, question, test_batch_id, user_profile)
                 retrieval_seconds = time.perf_counter() - retrieval_start
                 
-                # 2. Run Generation
-                generation_start = time.perf_counter()
-                generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
-                generation_seconds = time.perf_counter() - generation_start
+                # 2. Run Generation (optionally stubbed for quick/e2e runs without API keys)
+                if stub_generation:
+                    # Use the ground-truth as a stubbed answer to produce deterministic, local-only metrics
+                    generated_answer = f"[STUB_GENERATION] {ground_truth}"
+                    generation_seconds = 0.0
+                    print("[STUB] Generation disabled; using ground-truth as stubbed answer.")
+                else:
+                    generation_start = time.perf_counter()
+                    generated_answer = generation_func(query_processor, question, retrieval_data, user_profile)
+                    generation_seconds = time.perf_counter() - generation_start
                 print(f"A: {generated_answer[:100]}...")
                 
                 # Save to cache
@@ -1263,15 +1349,27 @@ def run_retrieval_semantic_chunking(
         print(f"Failed to load semantic batch '{semantic_batch_id}'. Falling back to baseline.")
         return run_retrieval_baseline(query_processor, query, batch_id, user_profile)
 
-    # Run retrieval against the semantic batch (keep candidate pool and web research consistent)
-    return query_processor.run_retrieval(
-        query=query,
-        batch_id=semantic_batch_id,
-        user_profile=user_profile,
-        skip_expansion=False,
-        top_k=RETRIEVAL_CANDIDATE_POOL,
-        allow_web_research=USE_WEB_RESEARCH,
-    )
+    # Use RRF fusion specifically for the semantic chunking experiment.
+    # RRF will combine ranked lists from FAISS and BM25 in a rank-based way,
+    # which is more robust than raw weighted combination when dealing with
+    # tabular or header-based splits.
+    try:
+        # PREFERRED: Use the RRF pipeline which will re-run retrieval (if
+        # needed) and then apply a rank-based fusion across FAISS/BM25.
+        return run_retrieval_rrf(query_processor, query, semantic_batch_id, user_profile)
+    except Exception as e:
+        print(f"[WARN] RRF fusion failed for semantic_chunking: {e} - falling back to semantic retrieval")
+        # Fallback: run regular retrieval but bias FAISS answers (good for tables)
+        return query_processor.run_retrieval(
+            query=query,
+            batch_id=semantic_batch_id,
+            user_profile=user_profile,
+            skip_expansion=False,
+            top_k=RETRIEVAL_CANDIDATE_POOL,
+            allow_web_research=USE_WEB_RESEARCH,
+            faiss_weight=0.9,
+            bm25_weight=0.1,
+        )
 
 
 def run_retrieval_semantic_rerank(
@@ -1642,13 +1740,15 @@ def run_single_experiment(
     profiles: Dict[str, Any],
     cache_manager: Optional[CacheManager],
     skip_ragas: bool,
-    clear_cache: bool
+    clear_cache: bool,
+    stub_generation: bool = False,
+    max_workers: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Runs the pipeline, evaluation, and local metrics for a single experiment."""
     if cache_manager and clear_cache:
         cache_manager.clear(experiment_name=experiment_name, batch_id=batch_id)
 
-    pipeline_results = run_pipeline(questions, profiles, experiment_name, batch_id, cache_manager)
+    pipeline_results = run_pipeline(questions, profiles, experiment_name, batch_id, cache_manager, stub_generation=stub_generation)
     local_metrics = compute_local_support_metrics(pipeline_results)
 
     if skip_ragas:
@@ -1656,7 +1756,7 @@ def run_single_experiment(
         evaluation_seconds = 0.0
     else:
         evaluation_result, evaluation_seconds = run_ragas_evaluation(
-            pipeline_results, experiment_name, batch_id, cache_manager
+            pipeline_results, experiment_name, batch_id, cache_manager, max_workers=max_workers
         )
 
     payload = build_results_payload(
@@ -1735,6 +1835,7 @@ def run_ragas_evaluation(
     experiment_name: str,
     batch_id: str,
     cache_manager: Optional[CacheManager] = None
+    , max_workers: Optional[int] = None
 ) -> tuple[Any, float]:
     """Runs RAGAS metrics on the collected results with validation and retries.
 
@@ -1799,14 +1900,23 @@ def run_ragas_evaluation(
     attempts = 3
     last_exception = None
     
-    # Configure RAGAS RunConfig: reduce parallelism (max_workers) to avoid hitting rate limits
-    # and keep reasonable timeouts/retries. Setting max_workers low reduces concurrent LLM calls.
+    # Configure RAGAS RunConfig: allow configurable parallelism via CLI/env
+    # Default to a conservative value (1) unless overridden by max_workers or EVAL_MAX_WORKERS.
+    try:
+        env_workers = int(os.getenv("EVAL_MAX_WORKERS", "1"))
+    except Exception:
+        env_workers = 1
+    initial_workers = max_workers if (isinstance(max_workers, int) and max_workers > 0) else env_workers
+    # Cap workers to a small number to avoid overwhelming rate limits
+    initial_workers = max(1, int(initial_workers))
+
     run_config = RunConfig(
-        timeout=120,     # seconds for a single operation (keep current value)
+        timeout=120,     # seconds for a single operation
         max_retries=3,   # retry attempts on transient failures
         max_wait=60,     # maximum backoff wait between retries
-        max_workers=1,   # REDUCED: force sequential execution to avoid rate limits and ensure stability
+        max_workers=initial_workers,
     )
+    print(f"[RAGAS] Using RunConfig.max_workers={run_config.max_workers}")
     
     for attempt in range(1, attempts + 1):
         try:
@@ -1880,11 +1990,27 @@ def run_ragas_evaluation(
             import traceback
             traceback.print_exc()
             last_exception = e
-            # Exponential backoff before retry (5s, 10s, 20s)
-            if attempt < attempts:
-                backoff_time = 5 * (2 ** (attempt - 1))
-                print(f"Waiting {backoff_time}s before retry...")
-                time.sleep(backoff_time)
+            # Detect rate-limit-like errors and adapt concurrency/backoff accordingly
+            err_str = str(e).lower()
+            is_rate_limit = any(tok in err_str for tok in ("rate limit", "rate_limit", "429", "too many requests"))
+            if is_rate_limit:
+                # Reduce concurrency to be conservative for next attempt
+                try:
+                    old_workers = run_config.max_workers
+                    run_config.max_workers = max(1, int(run_config.max_workers) // 2)
+                except Exception:
+                    run_config.max_workers = 1
+                print(f"[RAGAS][RATE_LIMIT] Detected rate limit. Lowering max_workers {old_workers} -> {run_config.max_workers} and backing off longer.")
+                if attempt < attempts:
+                    backoff_time = 15 * (2 ** (attempt - 1))
+                    print(f"Waiting {backoff_time}s before retry (rate-limit backoff)...")
+                    time.sleep(backoff_time)
+            else:
+                # Exponential backoff before retry (5s, 10s, 20s)
+                if attempt < attempts:
+                    backoff_time = 5 * (2 ** (attempt - 1))
+                    print(f"Waiting {backoff_time}s before retry...")
+                    time.sleep(backoff_time)
             continue
 
     # If we reach here, all attempts failed — write debug artifact
@@ -2087,6 +2213,19 @@ Examples:
         help="Skip the RAGAS evaluation step (fast mode) and only run pipeline + local metrics."
     )
     parser.add_argument(
+        "--stub-generation",
+        dest="stub_generation",
+        action="store_true",
+        help="Stub the LLM generation step by using the ground-truth as the generated answer (no API calls)."
+    )
+    parser.add_argument(
+        "--max-workers",
+        dest="max_workers",
+        type=int,
+        default=None,
+        help="Maximum concurrent workers for RAGAS evaluate (overrides EVAL_MAX_WORKERS env). Use small values (1-4) to avoid rate limits.",
+    )
+    parser.add_argument(
         "--dataset",
         type=str,
         default=None,
@@ -2175,7 +2314,9 @@ Examples:
             profiles,
             cache_manager,
             args.skip_ragas,
-            args.clear_cache
+            args.clear_cache,
+            args.stub_generation,
+            args.max_workers
         )
 
         aggregated_payloads.append(result['payload'])

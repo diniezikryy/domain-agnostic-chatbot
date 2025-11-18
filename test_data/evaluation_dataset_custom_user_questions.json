@@ -1,0 +1,153 @@
+[
+  {
+    "question_id": "AUTO_013",
+    "question": "I have been diagnosed with End Stage Kidney Failure and need a transplant. My doctor says this is a long-term side effect of the chemotherapy I received for my cancer when I was 10. Am I covered for the transplant?",
+    "ground_truth": "No, this would not be covered. Both of your relevant policies have clear pre-existing condition exclusions that would apply here. The cancer at age 10 predates the issuance of all your policies.\n\nManulife 'Critical Care Enhancer Rider (II)': This policy explicitly excludes claims for a critical illness \"caused directly or indirectly, wholly or partly by a condition which existed before the supplementary benefit issue date\". Since the kidney failure is a direct result of the pre-policy cancer (chemotherapy side effect), this exclusion applies, and the claim would be denied.\n\nGREAT SupremeHealth P PLUS: The policy's exclusions state that pre-existing conditions are \"Not covered unless disclosed and accepted\". According to your user profile, only \"history of asthma at age 10\" was disclosed during underwriting. Because the cancer was an undisclosed pre-existing condition, any subsequent related conditions, including this kidney failure, would not be covered.",
+    "reference_contexts": [
+      {
+        "filename": "Manulife_Policy_Illustration_REDACTED.pdf",
+        "page_number": 19,
+        "chunk_id": "my_policies::Manulife_Policy_Illustration_REDACTED.pdf::page_19",
+        "relevance": "Contains the pre-existing condition exclusion clause for Critical Care Enhancer Rider (II)"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[1].exclusions_summary.pre_existing_conditions",
+        "relevance": "States GREAT SupremeHealth exclusion: 'Not covered unless disclosed and accepted'"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[1].underwriting.existing_conditions_disclosure",
+        "relevance": "Shows only asthma was disclosed, not cancer"
+      }
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "user_custom"
+  },
+  {
+    "question_id": "AUTO_014",
+    "question": "I was in a small accident and went to a private hospital. I was diagnosed with \"Major Burns\" and also required \"Accidental Dental Treatment.\"",
+    "ground_truth": "Yes, you are covered by both policies in two separate ways:\n\n1. Lump Sum Payout (Manulife): Your Manulife 'Critical Care Enhancer Rider (II)' provides a lump sum payout of $500,000 for \"Major Burns,\" as it is one of the 36 listed critical illnesses covered under this rider. This payment is made directly to you and is separate from your hospital bill.\n\n2. Hospital Bill Coverage (GREAT SupremeHealth): Your 'GREAT SupremeHealth P PLUS' plan covers your bill from a private hospital. It explicitly covers \"Accidental Dental Treatment\" and the general costs for the burns treatment (like ward stay and surgery) \"As Charged\". You would be responsible for your $3,500 deductible and 10% co-insurance on the remaining bill after the deductible.",
+    "reference_contexts": [
+      {
+        "filename": "Manulife_Policy_Illustration_REDACTED.pdf",
+        "page_number": 17,
+        "chunk_id": "my_policies::Manulife_Policy_Illustration_REDACTED.pdf::page_17",
+        "relevance": "Lists Major Burns as one of the 36 critical illnesses covered"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[0].riders_active[1]",
+        "relevance": "Shows Critical Care Enhancer Rider (II) with $500,000 sum assured"
+      },
+      {
+        "filename": "GREAT_SupremeHealth_Benefits.pdf",
+        "page_number": 2,
+        "chunk_id": "my_policies::GREAT_SupremeHealth_Benefits.pdf::page_2",
+        "relevance": "Shows Accidental Dental Treatment covered 'As Charged' for P PLUS plan"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[1].coverage_summary",
+        "relevance": "Shows P PLUS deductible of $3,500 and 10% co-insurance"
+      }
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "user_custom"
+  },
+  {
+    "question_id": "AUTO_015",
+    "question": "I was on a trip to the US, and my flight was delayed by 7 hours due to a technical issue. Can it be claimed?",
+    "ground_truth": "Yes. Your 'GREAT TravelCare' Platinum plan has a \"Travel delay while overseas\" benefit. This benefit provides a cash payout of \"S$100 for every 4 hours\" of delay, up to a S$2,000 maximum. Since your 7-hour delay exceeds the 4-hour minimum threshold, you are eligible to claim S$100 (for the first 4-hour period). If the delay had been 8 hours or more, you would receive S$200.",
+    "reference_contexts": [
+      {
+        "filename": "GREAT_TravelCare.pdf",
+        "page_number": 4,
+        "chunk_id": "my_policies::GREAT_TravelCare.pdf::page_4",
+        "relevance": "Contains travel delay benefit details: S$100 every 4 hours (max S$2,000) for Platinum tier"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[2].key_benefits.travel_inconvenience.travel_delay_overseas",
+        "relevance": "Confirms Platinum plan has 'S$100 every 4 hours (max S$2,000)' for travel delay overseas"
+      }
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "user_custom"
+  },
+  {
+    "question_id": "AUTO_016",
+    "question": "I was diagnosed with cancer at age 10. My ManuProtect plan was issued when I was 22. Am I covered if I get cancer again?",
+    "ground_truth": "No. Your Manulife 'Critical Care Enhancer Rider (II)' was issued on 2023-08-30 when you were 22 years old, so the cancer at age 10 is a pre-existing condition. The policy contains an explicit exclusion for any critical illness \"caused directly or indirectly, wholly or partly by a condition which existed before the supplementary benefit issue date\". A recurrence or metastasis of a previous cancer would fall directly under this exclusion and would not be covered by the Critical Care Enhancer Rider.",
+    "reference_contexts": [
+      {
+        "filename": "Manulife_Policy_Illustration_REDACTED.pdf",
+        "page_number": 19,
+        "chunk_id": "my_policies::Manulife_Policy_Illustration_REDACTED.pdf::page_19",
+        "relevance": "Contains the pre-existing condition exclusion clause stating critical illness caused by condition before issue date is not covered"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[0].purchase_date",
+        "relevance": "Shows policy was issued on 2023-08-30 when user was 22"
+      }
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "user_custom"
+  },
+  {
+    "question_id": "AUTO_017",
+    "question": "Considering my current policy and age, which combination of insurance plans would provide lifetime coverage for cancer, including recurrence and metastatic treatments?",
+    "ground_truth": "Your 'GREAT SupremeHealth P PLUS' plan is your policy for lifetime coverage for cancer treatment costs. It has an \"Unlimited\" Lifetime Benefit Limit and covers hospitalization and related expenses, including \"Outpatient Cancer Drug Treatment\" for both \"one primary cancer\" (5x MediShield Life limit per month) and \"Multiple Primary Cancers\" (sum of highest limits among claimable treatments).\n\nHowever, there is a critical limitation: Coverage for a recurrence of your undisclosed childhood cancer (from question AUTO_016) would still be excluded due to the pre-existing condition clause. The GREAT SupremeHealth plan would only cover a new, unrelated cancer that develops in the future.\n\nYour 'ManuProtect Term (II)' is not a lifetime plan; it is a 10-year term policy that expires in 2033, and the Critical Care Enhancer Rider also excludes pre-existing cancer.",
+    "reference_contexts": [
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[1].coverage_summary.lifetime_benefit_limit",
+        "relevance": "Shows GREAT SupremeHealth has 'Unlimited' lifetime benefit limit"
+      },
+      {
+        "filename": "GREAT_SupremeHealth_Benefits.pdf",
+        "page_number": 3,
+        "chunk_id": "my_policies::GREAT_SupremeHealth_Benefits.pdf::page_3",
+        "relevance": "Details outpatient cancer drug treatment limits for P PLUS: 5x MediShield Life limit for one primary cancer, sum of highest limits for multiple primary cancers"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[0].coverage_summary.policy_term_years",
+        "relevance": "Shows ManuProtect Term (II) is a 10-year policy, not lifetime"
+      }
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "user_custom"
+  },
+  {
+    "question_id": "AUTO_018",
+    "question": "Does my GREAT SupremeHealth P Plus plan cover overseas outpatient treatment in Japan, and what are the limits and exclusions? if not what insurance should i get?",
+    "ground_truth": "No, your 'GREAT SupremeHealth P PLUS' plan does not cover general or elective outpatient treatment overseas. Its overseas coverage is limited to \"Emergency Medical Treatment outside Singapore\" only. This emergency coverage is \"As Charged\" but limited to private hospital charges.\n\nFor overseas outpatient treatment in Japan, the correct policy is your 'GREAT TravelCare' Platinum plan, which you already have:\n\n1. For a new medical condition: It covers \"Medical expenses while overseas\" up to S$1,000,000 for those under 70 years old.\n\n2. For your disclosed pre-existing asthma: Your \"pre-existing conditions add-on benefit\" covers overseas medical expenses up to S$200,000 (for under 70 years old), with a S$100 co-payment per outpatient visit.\n\nNote: The TravelCare coverage only applies during trips, with a maximum trip duration of 45 days per trip under your annual worldwide plan.",
+    "reference_contexts": [
+      {
+        "filename": "GREAT_SupremeHealth_Benefits.pdf",
+        "page_number": 4,
+        "chunk_id": "my_policies::GREAT_SupremeHealth_Benefits.pdf::page_4",
+        "relevance": "Shows Emergency Medical Treatment outside Singapore is limited to emergency situations only"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[2].key_benefits.personal_accident_medical.overseas_medical_expenses_under_70",
+        "relevance": "Shows TravelCare Platinum covers up to S$1,000,000 for overseas medical expenses"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[2].key_benefits.pre_existing_conditions_addon",
+        "relevance": "Shows pre-existing conditions add-on covers S$200,000 overseas medical with S$100 co-payment per outpatient visit"
+      },
+      {
+        "filename": "user_profile.json",
+        "section": "policy_details[2].coverage_summary.max_trip_duration_days",
+        "relevance": "Shows 45-day maximum trip duration for TravelCare coverage"
+      }
+    ],
+    "user_profile_id": "user_profile",
+    "test_scenario": "user_custom"
+  }
+]
