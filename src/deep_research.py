@@ -281,12 +281,131 @@ async def process_serp_result(
 #         return "Error generating report"
 
 # new way to generate final report using OpenAI only cuz its btr than nvidia model 
+import google.generativeai as genai
+import os
+
+# Configure Gemini at the top of your file
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+async def write_final_report(
+    prompt: str,
+    learnings: List[str],
+    visited_urls: List[str]
+) -> str:
+    """Write final research report using Google Gemini"""
+
+    learnings_string = "\n".join(
+        [f"<learning>\n{learning}\n</learning>" for learning in learnings]
+    )
+
+    report_prompt = f"""
+        You are an expert insurance analyst writing a comprehensive report for a client.
+
+        Using the user's query, their current policy information, and the research learnings from web sources, write a detailed insurance analysis report.
+
+        ## CRITICAL TABLE FORMATTING RULES:
+        When creating tables, use EXACTLY this format:
+
+        | Column 1 | Column 2 | Column 3 |
+        |----------|----------|----------|
+        | Data 1   | Data 2   | Data 3   |
+
+        Rules for tables:
+        - Maximum 4 columns per table
+        - Keep cell content SHORT (under 40 characters)
+        - Each row must start and end with |
+        - Always include blank line before and after tables
+        - If content is too long for a table, use bullet points instead
+
+        ## REPORT STRUCTURE (Follow this exactly):
+
+        ### 1. Introduction (2-3 sentences)
+        - Brief summary of what the user asked
+        - Overview of what this report covers
+
+        ### 2. Current Insurance Coverage Analysis
+        - Analyze user's EXISTING policies from the prompt
+        - Use tables to show coverage, limits, exclusions
+        - Cite RAG sources as: [Source X: filename, Page Y]
+
+        ### 3. Coverage Gaps and Limitations
+        - Identify what user's current policies DON'T cover
+        - Explain why this matters for their specific question
+
+        ### 4. Alternative Insurance Products (from Research)
+        - List specific products/plans from research learnings
+        - Include: Provider name, product name, coverage limits, estimated costs
+        - Use comparison tables where possible
+        - Cite web sources as: [Research: source description]
+
+        ### 5. Cost Analysis
+        - Out-of-pocket projections with current coverage
+        - Cost comparison with alternatives
+        - Use tables for clarity
+
+        ### 6. Actionable Recommendations
+        - Numbered list of specific steps user should take
+        - Include: "Contact X to inquire about Y" style actions
+
+        ### 7. Conclusion (2-3 sentences)
+        - Summary of key findings
+        - Most important next step
+
+        ## FORMATTING RULES:
+        - Use markdown tables for comparisons (at least 2 tables)
+        - Use bullet points for lists, not paragraphs
+        - Be concise but comprehensive (aim for about 500 words)
+        - Focus on ACTIONABLE insurance advice, not general medical info
+        - Always personalize using user's name and age from the prompt
+
+        ## CITATION RULES:
+        - For user's policy documents: [Source X: filename, Page Y]
+        - For web research: [Research: brief description]
+
+        ---
+
+        USER QUERY AND CURRENT POLICIES:
+        <prompt>
+        {prompt}
+        </prompt>
+
+        RESEARCH LEARNINGS FROM WEB:
+        <learnings>
+        {learnings_string}
+        </learnings>
+
+        Write the report now:
+        """
+    try:
+        # ===== GEMINI VERSION =====
+        model = genai.GenerativeModel('gemini-2.5-flash')  # or 'gemini-1.5-flash' for faster/cheaper
+        
+        # Combine system prompt and user prompt
+        full_prompt = system_prompt() + "\n\n" + report_prompt
+        
+        # Generate content
+        response = model.generate_content(full_prompt)
+        
+        report = response.text
+        # ===== END GEMINI =====
+
+        urls_section = "\n\n## Sources\n\n" + "\n".join(
+            [f"- {url}" for url in visited_urls]
+        )
+
+        return report + urls_section
+
+    except Exception as e:
+        log(f"Error writing final report: {e}")
+        return "Error generating report"
+    
+# new way to generate final report using OpenAI only cuz its btr than nvidia model 
 from openai import OpenAI
 import os
 
 client = OpenAI(api_key=os.getenv("OPENAI_KEY"))
 
-async def write_final_report(
+async def write_final_report_gpt(
     prompt: str,
     learnings: List[str],
     visited_urls: List[str]
@@ -468,16 +587,22 @@ async def deep_research(
                             "www.prudential.com.sg",
                             "www.income.com.sg",
                             "www.greateasternlife.com",
+                            "www.manulife.com.sg",
                             "www.policypal.com",
                             
                             # Regulatory/government sites
                             "www.moh.gov.sg",
                             "www.mas.gov.sg",
                             "www.cpf.gov.sg",  # Add CPF for MediShield Life info
+                            "www.lia.org.sg",
                             
                             # Insurance info sites
-                            # "www.moneysmart.sg",  # Add insurance comparison sites
+                            "www.moneysmart.sg",  # Add insurance comparison sites
                             # "www.seedly.sg",
+
+                            # Travel Insurance
+                            "www.singlife.com",
+                            "www.fwd.com.sg",
                         ],
                 }
 

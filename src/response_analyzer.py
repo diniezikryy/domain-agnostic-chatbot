@@ -19,15 +19,50 @@ class ResponseAnalyzer:
         Checks if the RAG response adequately answered the question.
         Returns True if good, False if needs deep research.
         """
-        
+        import re as regex  # local import to avoid scope issues in comprehensions
+        response_text = response or ""
+        response_lower = response_text.lower()
+
+        # Special case: clear, definitive negatives should be treated as satisfactory
+        definitive_negative_phrases = [
+            "you do not have",
+            "you don't have",
+            "you are not covered",
+            "you aren't covered",
+            "does not have any",
+            "no document found",
+            "no relevant documents",
+            "no records found",
+            "no policy found",
+            "no coverage found",
+            "no evidence of coverage",
+            "policy does not cover",
+            "couldn't find any relevant document",
+            "could not find any relevant document",
+            "couldn't find any relevant documents",
+            "could not find any relevant documents",
+        ]
+        definitive_negative_patterns = [
+            r"\bnot (eligible|covered)\b",
+            r"\bno (plan|policy|coverage) on file\b",
+            r"\bno (matching )?document\b",
+            r"\bnothing (relevant )?found\b",
+        ]
+        if any(phrase in response_lower for phrase in definitive_negative_phrases) or any(
+            regex.search(pattern, response_lower) for pattern in definitive_negative_patterns
+        ):
+            print("📊 Quality Check: ✅ Definitive negative response detected; treating as satisfactory.")
+            return True
+
         # Quick checks first
-        if not response or len(response.strip()) < 50:
+        if not response_text or len(response_text.strip()) < 50:
             print("📊 Quality Check: ❌ Response too short")
             return False
         
-        # ===== EXPANDED: More comprehensive checks =====
+        response_lower = response.lower()
+        query_lower = query.lower()
         
-        # 1. Explicit "don't know" phrases
+        # ===== 1. Explicit "don't know" phrases =====
         dont_know_phrases = [
             "i couldn't find",
             "no relevant information",
@@ -35,88 +70,130 @@ class ResponseAnalyzer:
             "unable to find",
             "not available in",
             "couldn't locate",
-            "amount not found",  # ← You have this in your responses!
-            "were not found in the provided documents"  # ← And this!
+            "amount not found",
+            "not found in the provided documents"
         ]
         
-        response_lower = response.lower()
         if any(phrase in response_lower for phrase in dont_know_phrases):
             print(f"📊 Quality Check: ❌ Contains 'don't know' phrase")
             return False
         
-        # 2. Deflecting phrases (NEW!)
+        # ===== 2. Deflecting to external sources =====
         deflecting_phrases = [
-            "would require details",
-            "you should evaluate",
-            "you should consider",
-            "it's advisable to review",
+            "please refer to your policy details",
+            "consider consulting with an insurance advisor",
             "you may want to refer",
             "you may want to contact",
-            "consult with an insurance advisor",
             "contact your insurance provider",
-            "for more details, please",
-            "ultimately, the decision should be based on",
-            "considerations for",
-            "factors to consider"
+            "consult your financial adviser",
+            "for personalized advice",
+            "for more information, please contact"
         ]
         
         if any(phrase in response_lower for phrase in deflecting_phrases):
-            print(f"📊 Quality Check: ❌ Deflecting - not answering directly")
+            print(f"📊 Quality Check: ❌ Deflecting to external sources")
             return False
         
-        # 3. Vague comparison language (NEW!)
+        # ===== 3. Generic recommendations without specifics =====
+        generic_recommendation_phrases = [
+            "you might consider purchasing",
+            "you should consider",
+            "you may want to purchase",
+            "you could look into",
+            "it may be worth considering",
+            "you might want to explore"
+        ]
+        
+        # Check if user asked for specific recommendations
+        asks_for_recommendations = any(word in query_lower for word in [
+            'what should i get',
+            'what should i buy',
+            'what insurance',
+            'what options',
+            'what alternatives',
+            'recommend',
+            'suggestion'
+        ])
+        
+        if asks_for_recommendations:
+            # Response must have specific product/company names
+            has_specific_product = any(name in response for name in [
+                'AIG', 'Allianz', 'AXA', 'Sompo', 'NTUC Income', 
+                'FWD', 'Tokio Marine', 'Chubb', 'Singlife',
+                'TravelShield', 'TravelCare', 'IncomeShield'
+            ])
+            
+            if any(phrase in response_lower for phrase in generic_recommendation_phrases) and not has_specific_product:
+                print(f"📊 Quality Check: ❌ Generic recommendation without specific products")
+                return False
+        
+        # ===== 4. Vague comparison language =====
         vague_comparison_phrases = [
             "typically aligns with",
             "generally similar to",
             "comparable to industry standards",
             "typical offerings",
-            "industry standard often includes",
-            "similar to what's available"
+            "industry standard often includes"
         ]
         
-        # Only check if query is asking for comparison
-        is_comparison_query = any(word in query.lower() for word in ['compare', 'comparison', 'versus', 'vs', 'better than', 'switch'])
+        is_comparison_query = any(word in query_lower for word in [
+            'compare', 'comparison', 'versus', 'vs', 'better than', 'switch', 'difference'
+        ])
         
         if is_comparison_query and any(phrase in response_lower for phrase in vague_comparison_phrases):
             print(f"📊 Quality Check: ❌ Vague comparison without data")
             return False
         
-        # 4. Check for citations (important!)
-        import re
-        has_source_citation = bool(re.search(r'\[Source \d+:', response))
-        has_profile_citation = '<USER PROFILE>' in response
+        # ===== 5. Check for missing specifics when user asks for them =====
+        asks_for_specifics = any(word in query_lower for word in [
+            'exactly', 'specifically', 'which', 'what are the'
+        ])
         
-        # For factual questions, we need citations
-        is_factual_query = any(word in query.lower() for word in ['how much', 'what is', 'do i have', 'am i covered', 'does my'])
+        if asks_for_specifics:
+            # Response should have concrete details (numbers, names, amounts)
+            import re
+            has_numbers = bool(re.search(r'\$[\d,]+|\d+%|\d{3,}', response))
+            has_specific_names = bool(re.search(r'[A-Z][a-zA-Z]+ (Insurance|Shield|Care|Plan)', response))
+            
+            if not (has_numbers or has_specific_names):
+                print(f"📊 Quality Check: ❌ User asked for specifics but response is vague")
+                return False
         
-        if is_factual_query and not (has_source_citation or has_profile_citation):
-            print("📊 Quality Check: ❌ Factual query but missing citations")
-            return False
-        
-        # ===== END EXPANDED CHECKS =====
-        
-        # Now use LLM for deeper analysis
-        analysis_prompt = f"""You are a strict quality checker for insurance chatbot responses.
+        # ===== 6. LLM analysis =====
+        analysis_prompt = f"""You are a STRICT quality checker for insurance chatbot responses.
 
     USER QUESTION: {query}
 
     BOT RESPONSE: {response}
 
-    Check if the response ACTUALLY ANSWERS the question with SPECIFIC information:
+    The user asked: "{query}"
 
-    ❌ BAD Examples:
-    - "You should evaluate if X offers better coverage..." (deflecting)
-    - "Typically aligns with industry standards" (vague, no data)
-    - "Would require details of their current offerings" (admitting ignorance)
-    - "Considerations for switching: Compare coverage..." (generic advice, not specific answer)
-    - "For more details, contact your provider" (deflecting)
+    Does the response FULLY answer this question with SPECIFIC, ACTIONABLE information?
 
-    ✅ GOOD Examples:
-    - "Your deductible is $3,500 [Source 1]"
-    - "AIA HealthShield Gold Max has a $3,000 deductible vs your $3,500" (actual comparison)
-    - "Industry average CI coverage is $250k, yours is $500k, which is above average" (specific data)
+    ❌ Mark as BAD if response:
+    - Says "you might consider..." without naming specific products/companies
+    - Says "consult an advisor" or "refer to your policy" (deflecting)
+    - Gives generic advice like "buy travel insurance" without specifics
+    - Uses vague terms like "typically" or "generally" for comparisons
+    - User asked "exactly what options" but got generic categories instead
 
-    Respond with ONLY ONE WORD: "GOOD" or "BAD"
+    ✅ Mark as GOOD if response:
+    - Names specific insurance products (e.g., "AIG Travel Guard", "Allianz TravelCare")
+    - Provides concrete numbers ($X coverage, Y% co-insurance)
+    - Directly answers what user asked for
+    - Has proper citations [Source X: ...]
+
+    Examples:
+
+    USER: "What alternative insurance should I get?"
+    BAD: "You might consider purchasing travel insurance for full coverage."
+    GOOD: "Consider AIG Travel Guard ($100k coverage, $50/month) or Allianz TravelCare Premium ($200k coverage, $80/month)."
+
+    USER: "Does my plan cover X?"
+    BAD: "Your plan may cover X, please consult your advisor."
+    GOOD: "Yes, your plan covers X up to $5,000 [Source 1: Policy.pdf, Page 5]."
+
+    Respond ONLY: "GOOD" or "BAD"
     """
         
         try:

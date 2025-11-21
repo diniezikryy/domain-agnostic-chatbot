@@ -86,11 +86,11 @@ function getAuthHeader() {
  */
 function buildDataUrl(endpoint, customerId = null, action = null) {
   let url = `${BASE}/api/data/${endpoint}`;
-  if (customerId) {
-    url += `/${customerId}`;
-  }
   if (action) {
     url += `/${action}`;
+  }
+  if (customerId) {
+    url += `/${customerId}`;
   }
   return url;
 }

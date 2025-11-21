@@ -106,25 +106,66 @@ class QueryProcessor:
         insurance_signals = [
             "policy",
             "coverage",
+            "covered",
+            "cover",
             "claim",
+            "claims",
             "premium",
             "benefit",
             "deductible",
             "co-insurance",
+            "coinsurance",
             "exclusion",
             "rider",
             "sum insured",
             "health plan",
             "critical illness",
             "insurer",
-            "travel insurance",
-            "life insurance",
+            "travel",
+            "trip",
+            "accident",
             "hospital",
+            # Plan/insurer names so short queries like "singlife vs fwd" are allowed
+            "singlife",
+            "fwd",
+            "aia",
+            "prudential",
+            "manulife",
+            "great eastern",
         ]
 
         # If it mentions any insurance-related term, allow it
         if any(sig in q for sig in insurance_signals):
             return False
+
+        # General knowledge or non-insurance domains
+        if any(
+            phrase in q
+            for phrase in [
+                "who is",
+                "president",
+                "prime minister",
+                "capital of",
+                "population of",
+                "weather",
+                "forecast",
+                "temperature",
+                "stock price",
+                "share price",
+                "bitcoin",
+                "crypto",
+                "football",
+                "soccer",
+                "nba",
+                "movie",
+                "song",
+                "lyrics",
+                "restaurant",
+                "visit",
+                "travel to",
+            ]
+        ):
+            return True
 
         out_of_scope_signals = [
             "python",
@@ -148,7 +189,11 @@ class QueryProcessor:
             "lyrics",
         ]
 
-        return any(sig in q for sig in out_of_scope_signals)
+        if any(sig in q for sig in out_of_scope_signals):
+            return True
+
+        # Default behavior: if it's not clearly insurance, treat it as out of scope
+        return True
 
     def _run_retrieval_sync(
         self,
@@ -483,20 +528,56 @@ class QueryProcessor:
                 "co-insurance",
             ]
         )
+        wants_travel_incident = any(
+            k in query_lower
+            for k in [
+                "travel",
+                "trip",
+                "overseas",
+                "abroad",
+                "rental car",
+                "car rental",
+                "road accident",
+                "accident",
+                "baggage",
+                "luggage",
+                "flight delay",
+                "trip cancellation",
+                "trip interruption",
+                "evacuation",
+            ]
+        )
 
         boosted = []
         currency_re = re.compile(r"(\$\s?\d|sgd|sum insured|payout|benefit)", re.I)
         health_re = re.compile(r"(deductible|co-?insurance|out[- ]of[- ]pocket)", re.I)
+        travel_med_re = re.compile(
+            r"(medical|medical expense|hospital|clinic|treatment|emergency evacuation|repatriation|overseas medical)",
+            re.I,
+        )
+        travel_pa_re = re.compile(
+            r"(personal accident|accidental death|permanent disablement|injury)",
+            re.I,
+        )
 
         forced_ci_candidate = None
         forced_ci_score = float("-inf")
         forced_health_candidate = None
         forced_health_score = float("-inf")
+        forced_travel_med_candidate = None
+        forced_travel_med_score = float("-inf")
+        forced_travel_pa_candidate = None
+        forced_travel_pa_score = float("-inf")
 
         for idx, res in enumerate(results):
             meta = res.get("metadata", {}) or {}
             content = (res.get("content") or "").lower()
             plan_context = meta.get("plan_context") or []
+            filename = (meta.get("filename") or "").lower()
+            travel_match = any(
+                "travel" in pc.lower() or "travelcare" in pc.lower()
+                for pc in plan_context
+            ) or ("travelcare" in filename)
 
             # Use combined_score from hybrid search as the base, falling back to score
             score = res.get("combined_score") or res.get("score", 0) or 0
@@ -511,6 +592,8 @@ class QueryProcessor:
                 "supremehealth" in pc.lower() for pc in plan_context
             ):
                 score += 0.3
+            if wants_travel_incident and travel_match:
+                score += 0.4
 
             if "sum insured" in content or "$" in content or "benefit" in content:
                 score += 0.1  # slight boost for amount-bearing chunks
@@ -518,6 +601,13 @@ class QueryProcessor:
                 score += 0.1
             if "major cancer" in content or "critical illness" in content:
                 score += 0.1
+            if wants_travel_incident and (
+                "evacuation" in content
+                or "repatriation" in content
+                or "accident" in content
+                or "medical expense" in content
+            ):
+                score += 0.2
 
             # Track best CI chunk with explicit amount words
             if wants_ci and (
@@ -549,6 +639,21 @@ class QueryProcessor:
                     forced_health_candidate = res
                     forced_health_score = health_score
 
+            # Track travel medical/evacuation chunks
+            if wants_travel_incident and travel_match:
+                if travel_med_re.search(content):
+                    bonus = 25
+                    travel_score = score + bonus
+                    if travel_score > forced_travel_med_score:
+                        forced_travel_med_candidate = res
+                        forced_travel_med_score = travel_score
+                if travel_pa_re.search(content):
+                    bonus = 20
+                    travel_pa_score = score + bonus
+                    if travel_pa_score > forced_travel_pa_score:
+                        forced_travel_pa_candidate = res
+                        forced_travel_pa_score = travel_pa_score
+
             boosted.append((score, res))
 
         # Sort by boosted score descending
@@ -564,6 +669,14 @@ class QueryProcessor:
         if wants_health and forced_health_candidate:
             if forced_health_candidate not in reranked[:max_results]:
                 reranked = [forced_health_candidate] + reranked
+
+        # Force-include travel medical/evacuation and personal accident chunks
+        if wants_travel_incident and forced_travel_med_candidate:
+            if forced_travel_med_candidate not in reranked[:max_results]:
+                reranked = [forced_travel_med_candidate] + reranked
+        if wants_travel_incident and forced_travel_pa_candidate:
+            if forced_travel_pa_candidate not in reranked[:max_results]:
+                reranked = [forced_travel_pa_candidate] + reranked
 
         return reranked[:max_results]
 
@@ -617,6 +730,110 @@ class QueryProcessor:
 
         return injected
 
+    # def _multi_policy_search(
+    #     self,
+    #     query: str,
+    #     expanded_query: str,
+    #     user_profile: Dict,
+    #     chunks_per_policy: int = 10,
+    # ) -> List[Dict[str, Any]]:
+    #     """
+    #     Perform separate searches for each policy the user owns, then combine results.
+    #     This ensures balanced representation across all policies.
+
+    #     Args:
+    #         query: Original user query
+    #         expanded_query: Expanded query with additional keywords
+    #         user_profile: User profile containing insurance_policies
+    #         chunks_per_policy: Number of chunks to retrieve per policy (default: 10)
+
+    #     Returns:
+    #         Combined list of search results from all policies
+    #     """
+    #     insurance_policies = user_profile.get("insurance_policies", {})
+    #     if not insurance_policies:
+    #         print("No policies found in user profile, falling back to standard search")
+    #         return self.search_engine.hybrid_search(
+    #             query=expanded_query, top_k=config.SEARCH_TOP_K
+    #         )
+
+    #     all_results = []
+    #     policy_filenames = list(insurance_policies.keys())
+
+    #     # Detect if query is asking about amounts/coverage
+    #     query_lower = query.lower()
+    #     wants_amount = any(
+    #         kw in query_lower
+    #         for kw in [
+    #             "how much",
+    #             "amount",
+    #             "sum insured",
+    #             "coverage",
+    #             "covered for",
+    #             "$",
+    #             "money",
+    #             "payout",
+    #         ]
+    #     )
+
+    #     print(f"\n=== Multi-Policy Search ===")
+    #     print(f"Searching across {len(policy_filenames)} policies: {policy_filenames}")
+
+    #     for filename in policy_filenames:
+    #         print(f"\nSearching policy: {filename}")
+    #         policy_results = self.search_engine.hybrid_search(
+    #             query=expanded_query, top_k=chunks_per_policy, filename_filter=filename
+    #         )
+    #         print(f"  → Retrieved {len(policy_results)} chunks from {filename}")
+
+    #         # For amount queries on Life/CI policies, do an additional targeted search
+    #         if wants_amount and "Manulife" in filename:
+    #             print(
+    #                 f"  → Amount query detected - performing additional targeted search"
+    #             )
+    #             amount_query = "sum insured benefit amount payout table premium"
+    #             extra_results = self.search_engine.hybrid_search(
+    #                 query=amount_query, top_k=5, filename_filter=filename
+    #             )
+    #             print(
+    #                 f"  → Retrieved {len(extra_results)} additional chunks with amount focus"
+    #             )
+
+    #             # Add extra results, avoiding duplicates
+    #             existing_content = {r.get("content", "") for r in policy_results}
+    #             for extra in extra_results:
+    #                 if extra.get("content", "") not in existing_content:
+    #                     policy_results.append(extra)
+    #                     print(
+    #                         f"     + Added extra chunk from page {extra.get('metadata', {}).get('page_number', '?')}"
+    #                     )
+
+    #         # Debug: Show page numbers and scores for Manulife
+    #         if "Manulife" in filename:
+    #             print(f"  → Manulife chunk details:")
+    #             for i, result in enumerate(policy_results[:15], 1):
+    #                 metadata = result.get("metadata", {})
+    #                 page = metadata.get("page_number", "N/A")
+    #                 score = result.get("combined_score", 0)
+    #                 content_preview = result.get("content", "")[:60].replace("\n", " ")
+    #                 has_dollar = "$" in result.get("content", "")
+    #                 dollar_marker = " [$]" if has_dollar else ""
+    #                 print(
+    #                     f"     #{i}: Page {page} (score: {score:.3f}){dollar_marker} - {content_preview}..."
+    #                 )
+
+    #         # Tag each result with its policy for tracking
+    #         for result in policy_results:
+    #             result["source_policy"] = filename
+    #             all_results.append(result)
+
+    #     print(
+    #         f"\nTotal chunks retrieved: {len(all_results)} ({chunks_per_policy} per policy)"
+    #     )
+    #     print(f"=== End Multi-Policy Search ===\n")
+
+    #     return all_results
+
     def _multi_policy_search(
         self,
         query: str,
@@ -625,17 +842,8 @@ class QueryProcessor:
         chunks_per_policy: int = 10,
     ) -> List[Dict[str, Any]]:
         """
-        Perform separate searches for each policy the user owns, then combine results.
-        This ensures balanced representation across all policies.
-
-        Args:
-            query: Original user query
-            expanded_query: Expanded query with additional keywords
-            user_profile: User profile containing insurance_policies
-            chunks_per_policy: Number of chunks to retrieve per policy (default: 10)
-
-        Returns:
-            Combined list of search results from all policies
+        Perform separate searches for each policy, PLUS force-include the first few pages
+        and dollar-heavy tables to ensure the "Schedule/Benefit Table" is always present.
         """
         insurance_policies = user_profile.get("insurance_policies", {})
         if not insurance_policies:
@@ -647,76 +855,53 @@ class QueryProcessor:
         all_results = []
         policy_filenames = list(insurance_policies.keys())
 
-        # Detect if query is asking about amounts/coverage
-        query_lower = query.lower()
-        wants_amount = any(
-            kw in query_lower
-            for kw in [
-                "how much",
-                "amount",
-                "sum insured",
-                "coverage",
-                "covered for",
-                "$",
-                "money",
-                "payout",
-            ]
-        )
-
-        print(f"\n=== Multi-Policy Search ===")
+        print(f"\n=== Multi-Policy Search (Enhanced) ===")
         print(f"Searching across {len(policy_filenames)} policies: {policy_filenames}")
 
         for filename in policy_filenames:
             print(f"\nSearching policy: {filename}")
+
+            # 1. Standard Semantic/Keyword Search (Finds definitions/medical terms)
             policy_results = self.search_engine.hybrid_search(
                 query=expanded_query, top_k=chunks_per_policy, filename_filter=filename
             )
-            print(f"  → Retrieved {len(policy_results)} chunks from {filename}")
 
-            # For amount queries on Life/CI policies, do an additional targeted search
-            if wants_amount and "Manulife" in filename:
-                print(
-                    f"  → Amount query detected - performing additional targeted search"
-                )
-                amount_query = "sum insured benefit amount payout table premium"
-                extra_results = self.search_engine.hybrid_search(
-                    query=amount_query, top_k=5, filename_filter=filename
-                )
-                print(
-                    f"  → Retrieved {len(extra_results)} additional chunks with amount focus"
-                )
+            # 2. Force-Include Schedule/Benefit Tables (Finds dollar amounts)
+            # We run a targeted search for table-like keywords
+            print(f"  → Injecting Schedule/Benefit pages for {filename}...")
 
-                # Add extra results, avoiding duplicates
-                existing_content = {r.get("content", "") for r in policy_results}
-                for extra in extra_results:
-                    if extra.get("content", "") not in existing_content:
-                        policy_results.append(extra)
-                        print(
-                            f"     + Added extra chunk from page {extra.get('metadata', {}).get('page_number', '?')}"
-                        )
+            schedule_results = self.search_engine.hybrid_search(
+                query="Policy Schedule Sum Insured Benefit Table Deductible Limit Premium",
+                top_k=10,  # Look at top 10 candidates for tables
+                filename_filter=filename,
+            )
 
-            # Debug: Show page numbers and scores for Manulife
-            if "Manulife" in filename:
-                print(f"  → Manulife chunk details:")
-                for i, result in enumerate(policy_results[:15], 1):
-                    metadata = result.get("metadata", {})
-                    page = metadata.get("page_number", "N/A")
-                    score = result.get("combined_score", 0)
-                    content_preview = result.get("content", "")[:60].replace("\n", " ")
-                    has_dollar = "$" in result.get("content", "")
-                    dollar_marker = " [$]" if has_dollar else ""
-                    print(
-                        f"     #{i}: Page {page} (score: {score:.3f}){dollar_marker} - {content_preview}..."
-                    )
+            # Filter to keep only the most high-value "Money Pages"
+            injected_count = 0
+            for res in schedule_results:
+                page = res.get("metadata", {}).get("page_number", 999)
+                content = res.get("content", "")
 
-            # Tag each result with its policy for tracking
+                # CONDITIONAL: Keep chunk IF:
+                # A. It is within the first 7 pages (Covers Manulife Rider Summary on Pg 6)
+                # B. OR it contains a dollar sign "$" (Covers SupremeHealth tables on later pages)
+                if page <= 7 or "$" in content:
+
+                    # Dedup: Don't add if we already found it in the semantic search
+                    existing_contents = [r.get("content") for r in policy_results]
+                    if content not in existing_contents:
+                        policy_results.append(res)
+                        injected_count += 1
+                        print(f"     + Injected Schedule Chunk (Page {page})")
+
+            print(f"  → Total chunks for this policy: {len(policy_results)}")
+
+            # Tag and collect
             for result in policy_results:
                 result["source_policy"] = filename
                 all_results.append(result)
 
-        print(
-            f"\nTotal chunks retrieved: {len(all_results)} ({chunks_per_policy} per policy)"
-        )
+        print(f"\nTotal chunks retrieved: {len(all_results)}")
         print(f"=== End Multi-Policy Search ===\n")
 
         return all_results
@@ -840,7 +1025,7 @@ class QueryProcessor:
         is_personal_batch: bool,
         user_profile: Optional[Dict],
         max_chunks: int = 30,
-        max_context_length: int = 12000,  # Token limit
+        max_context_length: int = 100000,  # Token limit
     ) -> tuple[str, str]:
         """
         Prepares the context for AI with token management.
@@ -971,247 +1156,416 @@ class QueryProcessor:
 
         return profile_info, context_from_docs
 
+    # def process_query_stream(
+    #     self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
+    # ):
+    #     """Process a query and yield response chunks for streaming."""
+    #     try:
+    #         # === Guard 1: Out-of-scope filter before any retrieval/LLM work ===
+    #         if self._is_out_of_scope(query):
+    #             refusal = "I can only help with insurance and policy questions using the provided documents."
+    #             yield "data: " + json.dumps({"content": refusal}) + "\n\n"
+    #             yield "data: " + json.dumps({"done": True}) + "\n\n"
+    #             return
+
+    #         # Determine the target batch
+    #         target_batch = batch_id or self.batch_manager.get_default_batch()
+    #         if not target_batch:
+    #             yield "data: " + json.dumps(
+    #                 {"error": "No batch specified and no default batch set."}
+    #             ) + "\n\n"
+    #             return
+
+    #         # Ensure the correct batch's indexes are loaded
+    #         if not self._ensure_batch_loaded(target_batch):
+    #             yield "data: " + json.dumps(
+    #                 {"error": f"Failed to load or switch to batch '{target_batch}'."}
+    #             ) + "\n\n"
+    #             return
+
+    #         start_time = time.time()
+    #         print(f"\nProcessing query for batch: {target_batch}")
+    #         print(f"Query: {query}")
+
+    #         # Analyze intent
+    #         intent_analyzer = IntentAnalyzer()
+    #         intent = intent_analyzer.analyze(query)
+    #         print(f"Intent analysis: {intent}")
+
+    #         # Use the new adapter-style retrieval method (async) from a
+    #         # synchronous context so the streaming UI remains unchanged.
+    #         is_personal_batch = target_batch.startswith("user_")
+
+    #         loop = asyncio.new_event_loop()
+    #         asyncio.set_event_loop(loop)
+    #         try:
+    #             raw_search_results = loop.run_until_complete(
+    #                 self.run_retrieval(
+    #                     query=query,
+    #                     batch_id=target_batch,
+    #                     user_profile=user_profile,
+    #                     top_k=config.SEARCH_TOP_K,
+    #                 )
+    #             )
+    #         finally:
+    #             loop.close()
+
+    #         print(
+    #             f"Retrieved {len(raw_search_results)} raw results from hybrid search."
+    #         )
+
+    #         # Quick intent flags for targeted boosts
+    #         query_lower = query.lower()
+    #         wants_ci = any(
+    #             k in query_lower
+    #             for k in [
+    #                 "cancer",
+    #                 "ci",
+    #                 "critical illness",
+    #                 "major cancer",
+    #                 "bypass",
+    #                 "cabg",
+    #                 "coronary artery",
+    #                 "heart attack",
+    #                 "stroke",
+    #                 "angioplasty",
+    #             ]
+    #         )
+    #         wants_health = any(
+    #             k in query_lower
+    #             for k in [
+    #                 "hospital",
+    #                 "treatment",
+    #                 "surgery",
+    #                 "warded",
+    #                 "deductible",
+    #                 "co-insurance",
+    #             ]
+    #         )
+
+    #         # Targeted second-pass search to force in key policy chunks if missing
+    #         def _has_plan(results, name_substr: str) -> bool:
+    #             for r in results:
+    #                 meta = r.get("metadata") or {}
+    #                 plan_context = meta.get("plan_context") or []
+    #                 content = (r.get("content") or "").lower()
+    #                 if any(name_substr in pc.lower() for pc in plan_context):
+    #                     return True
+    #                 if name_substr in content:
+    #                     return True
+    #             return False
+
+    #         if wants_ci and not _has_plan(raw_search_results, "critical care enhancer"):
+    #             extra_ci = self.search_engine.hybrid_search(
+    #                 query="Critical Care Enhancer Rider sum insured payout benefit CCE",
+    #                 top_k=5,
+    #             )
+    #             raw_search_results.extend(extra_ci)
+    #             # Heuristic forced inclusion from index if amounts still missing
+    #             forced_cce = self._inject_top_plan_chunks(
+    #                 plan_substr="critical care enhancer",
+    #                 signals=[
+    #                     "sum insured",
+    #                     "$",
+    #                     "benefit",
+    #                     "payout",
+    #                     "500,000",
+    #                     "1,000,000",
+    #                 ],
+    #                 max_hits=2,
+    #             )
+    #             raw_search_results.extend(forced_cce)
+
+    #         if wants_health and not _has_plan(raw_search_results, "supremehealth"):
+    #             extra_health = self.search_engine.hybrid_search(
+    #                 query="GREAT SupremeHealth P PLUS deductible co-insurance ward A",
+    #                 top_k=5,
+    #             )
+    #             raw_search_results.extend(extra_health)
+    #             forced_supreme = self._inject_top_plan_chunks(
+    #                 plan_substr="supremehealth",
+    #                 signals=[
+    #                     "deductible",
+    #                     "co-insurance",
+    #                     "$3,500",
+    #                     "ward",
+    #                     "co payment",
+    #                     "co-payment",
+    #                 ],
+    #                 max_hits=2,
+    #             )
+    #             raw_search_results.extend(forced_supreme)
+
+    #         unique_results = self._deduplicate_results(raw_search_results)
+    #         # Domain-aware rerank/force-includes to get higher-signal chunks
+    #         unique_results = self._rerank_insurance_results(
+    #             query, unique_results, max_results=config.MAX_CONTEXT_CHUNKS + 3
+    #         )
+
+    #         # === Guard 2: Retrieval sufficiency gate ===
+    #         if not unique_results:
+    #             error_msg = "I could not find relevant insurance information in your documents for this question."
+    #             yield "data: " + json.dumps(
+    #                 {"content": error_msg, "done": True}
+    #             ) + "\n\n"
+    #             return
+
+    #         # Debug: write reranked chunks to a log file for inspection
+    #         try:
+    #             from pathlib import Path
+
+    #             debug_dir = Path("logs")
+    #             debug_dir.mkdir(exist_ok=True)
+    #             log_path = debug_dir / "reranked_chunks.txt"
+    #             with open(log_path, "w", encoding="utf-8") as log_file:
+    #                 log_file.write(f"Query: {query}\n")
+    #                 log_file.write(
+    #                     f"Total reranked: {len(unique_results)} (showing top {min(50, len(unique_results))})\n\n"
+    #                 )
+    #                 for i, r in enumerate(
+    #                     unique_results[: min(50, len(unique_results))], 1
+    #                 ):
+    #                     meta = r.get("metadata", {}) or {}
+    #                     filename = meta.get("filename", "Unknown")
+    #                     page = meta.get("page_number", "N/A")
+    #                     plan_ctx = ", ".join(meta.get("plan_context") or [])
+    #                     snippet = (r.get("content") or "").replace("\n", " ")[:400]
+    #                     log_file.write(
+    #                         f"#{i} {filename} p{page} | plans: {plan_ctx}\n{snippet}\n\n"
+    #                     )
+    #         except Exception as debug_err:
+    #             print(f"[DEBUG] Failed to write reranked chunk log: {debug_err}")
+
+    #         # Prepare context early for potential deep research use
+    #         profile_info, context_from_docs = self._prepare_context(
+    #             unique_results, is_personal_batch, user_profile
+    #         )
+
+    #         # Check if no results found
+    #         if not unique_results:
+    #             if is_personal_batch:
+    #                 error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
+    #             else:
+    #                 error_msg = f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
+    #             yield "data: " + json.dumps(
+    #                 {"content": error_msg, "done": True}
+    #             ) + "\n\n"
+    #             return
+
+    #         # ===== NEW: ANALYZE → RETRY LOGIC =====
+    #         # Step 1: Try normal RAG first (stream AND collect, but don't show to user yet)
+    #         print("🔄 Attempting normal RAG response...")
+    #         normal_response_chunks = []
+    #         stored_rag_chunks = []
+
+    #         for chunk in self._generate_response_stream(
+    #             query, unique_results, is_personal_batch, user_profile
+    #         ):
+    #             stored_rag_chunks.append(chunk)  # Store for later
+    #             # Collect for analysis
+    #             try:
+    #                 chunk_data = json.loads(chunk.replace("data: ", "").strip())
+    #                 if "content" in chunk_data:
+    #                     normal_response_chunks.append(chunk_data["content"])
+    #             except:
+    #                 pass  # Ignore parsing errors for "done" chunks
+
+    #         # Step 2: Analyze the collected response quality
+    #         full_response = "".join(normal_response_chunks)
+    #         response_analyzer = ResponseAnalyzer()
+    #         is_satisfactory = response_analyzer._analyze_response_quality(
+    #             query, full_response, user_profile
+    #         )
+
+    #         # Step 3: If bad → trigger deep research
+    #         print(
+    #             f"🔍 DEBUG: is_satisfactory={is_satisfactory}, deep_research_enabled={self.deep_research_enabled}"
+    #         )
+    #         if not is_satisfactory and self.deep_research_enabled:
+    #             print("⚠️ Normal RAG response insufficient. Triggering deep research...")
+    #             # Notify user
+    #             yield "data: " + json.dumps(
+    #                 {
+    #                     "status": "enhancing_response",
+    #                     "message": "Let me search for more comprehensive information...",
+    #                 }
+    #             ) + "\n\n"
+
+    #             # Run deep research
+    #             from src.run_ui import run_ui
+
+    #             loop = asyncio.new_event_loop()
+    #             asyncio.set_event_loop(loop)
+
+    #             try:
+    #                 async_gen = run_ui(
+    #                     query=query,
+    #                     intent=intent,
+    #                     profile_info=profile_info,
+    #                     context_from_docs=context_from_docs,
+    #                 ).__aiter__()
+
+    #                 while True:
+    #                     try:
+    #                         chunk = loop.run_until_complete(async_gen.__anext__())
+    #                         yield "data: " + json.dumps(chunk) + "\n\n"
+    #                     except StopAsyncIteration:
+    #                         break
+    #             finally:
+    #                 loop.close()
+
+    #             print("✅ Deep research completed.")
+    #         else:
+    #             print("✅ Normal RAG response satisfactory. Streaming to user...")
+    #             # Yield ALL stored RAG chunks
+    #             for chunk in stored_rag_chunks:
+    #                 yield chunk
+
+    #         # Signal completion
+    #         yield "data: " + json.dumps({"done": True}) + "\n\n"
+
+    #         processing_time = time.time() - start_time
+    #         print(f"Total processing time: {processing_time:.2f}s")
+
+    #     except Exception as e:
+    #         import traceback
+
+    #         print(f"An unexpected error occurred in process_query_stream: {e}")
+    #         traceback.print_exc()
+    #         yield "data: " + json.dumps(
+    #             {"error": f"An error occurred while processing your query: {e}"}
+    #         ) + "\n\n"
+
     def process_query_stream(
         self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
     ):
-        """Process a query and yield response chunks for streaming."""
+        """
+        Two-Phase Streaming Flow:
+        1. Immediate RAG Response (Fast)
+        2. Post-Response Analysis -> Optional Deep Research (Slow)
+        """
         try:
-            # === Guard 1: Out-of-scope filter before any retrieval/LLM work ===
+            # === Guard: Out-of-scope ===
             if self._is_out_of_scope(query):
-                refusal = "I can only help with insurance and policy questions using the provided documents."
-                yield "data: " + json.dumps({"content": refusal}) + "\n\n"
+                yield "data: " + json.dumps(
+                    {"content": "I can only help with insurance questions."}
+                ) + "\n\n"
                 yield "data: " + json.dumps({"done": True}) + "\n\n"
                 return
 
-            # Determine the target batch
+            # Setup Batch
             target_batch = batch_id or self.batch_manager.get_default_batch()
-            if not target_batch:
-                yield "data: " + json.dumps(
-                    {"error": "No batch specified and no default batch set."}
-                ) + "\n\n"
+            if not target_batch or not self._ensure_batch_loaded(target_batch):
+                yield "data: " + json.dumps({"error": "Batch loading failed."}) + "\n\n"
                 return
 
-            # Ensure the correct batch's indexes are loaded
-            if not self._ensure_batch_loaded(target_batch):
-                yield "data: " + json.dumps(
-                    {"error": f"Failed to load or switch to batch '{target_batch}'."}
-                ) + "\n\n"
-                return
+            print(f"\nProcessing query: {query}")
 
-            start_time = time.time()
-            print(f"\nProcessing query for batch: {target_batch}")
-            print(f"Query: {query}")
-
-            # Analyze intent
+            # 1. Intent Analysis
             intent_analyzer = IntentAnalyzer()
             intent = intent_analyzer.analyze(query)
-            print(f"Intent analysis: {intent}")
 
-            # Use the new adapter-style retrieval method (async) from a
-            # synchronous context so the streaming UI remains unchanged.
+            # 2. Retrieval (Async)
             is_personal_batch = target_batch.startswith("user_")
-
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 raw_search_results = loop.run_until_complete(
                     self.run_retrieval(
-                        query=query,
-                        batch_id=target_batch,
-                        user_profile=user_profile,
-                        top_k=config.SEARCH_TOP_K,
+                        query, target_batch, user_profile, config.SEARCH_TOP_K
                     )
                 )
             finally:
                 loop.close()
 
-            print(
-                f"Retrieved {len(raw_search_results)} raw results from hybrid search."
-            )
-
-            # Quick intent flags for targeted boosts
-            query_lower = query.lower()
-            wants_ci = any(
-                k in query_lower
-                for k in [
-                    "cancer",
-                    "ci",
-                    "critical illness",
-                    "major cancer",
-                    "bypass",
-                    "cabg",
-                    "coronary artery",
-                    "heart attack",
-                    "stroke",
-                    "angioplasty",
-                ]
-            )
-            wants_health = any(
-                k in query_lower
-                for k in [
-                    "hospital",
-                    "treatment",
-                    "surgery",
-                    "warded",
-                    "deductible",
-                    "co-insurance",
-                ]
-            )
-
-            # Targeted second-pass search to force in key policy chunks if missing
-            def _has_plan(results, name_substr: str) -> bool:
-                for r in results:
-                    meta = r.get("metadata") or {}
-                    plan_context = meta.get("plan_context") or []
-                    content = (r.get("content") or "").lower()
-                    if any(name_substr in pc.lower() for pc in plan_context):
-                        return True
-                    if name_substr in content:
-                        return True
-                return False
-
-            if wants_ci and not _has_plan(raw_search_results, "critical care enhancer"):
-                extra_ci = self.search_engine.hybrid_search(
-                    query="Critical Care Enhancer Rider sum insured payout benefit CCE",
-                    top_k=5,
-                )
-                raw_search_results.extend(extra_ci)
-                # Heuristic forced inclusion from index if amounts still missing
-                forced_cce = self._inject_top_plan_chunks(
-                    plan_substr="critical care enhancer",
-                    signals=[
-                        "sum insured",
-                        "$",
-                        "benefit",
-                        "payout",
-                        "500,000",
-                        "1,000,000",
-                    ],
-                    max_hits=2,
-                )
-                raw_search_results.extend(forced_cce)
-
-            if wants_health and not _has_plan(raw_search_results, "supremehealth"):
-                extra_health = self.search_engine.hybrid_search(
-                    query="GREAT SupremeHealth P PLUS deductible co-insurance ward A",
-                    top_k=5,
-                )
-                raw_search_results.extend(extra_health)
-                forced_supreme = self._inject_top_plan_chunks(
-                    plan_substr="supremehealth",
-                    signals=[
-                        "deductible",
-                        "co-insurance",
-                        "$3,500",
-                        "ward",
-                        "co payment",
-                        "co-payment",
-                    ],
-                    max_hits=2,
-                )
-                raw_search_results.extend(forced_supreme)
-
+            # 3. Deduplicate/Rerank
             unique_results = self._deduplicate_results(raw_search_results)
-            # Domain-aware rerank/force-includes to get higher-signal chunks
             unique_results = self._rerank_insurance_results(
                 query, unique_results, max_results=config.MAX_CONTEXT_CHUNKS + 3
             )
 
-            # === Guard 2: Retrieval sufficiency gate ===
+            # Buffer to capture the first response for analysis
+            rag_response_buffer = ""
+
+            # =====================================================
+            # PHASE 1: STANDARD RAG (Immediate Answer)
+            # =====================================================
             if not unique_results:
-                error_msg = "I could not find relevant insurance information in your documents for this question."
-                yield "data: " + json.dumps(
-                    {"content": error_msg, "done": True}
-                ) + "\n\n"
-                return
+                # Handle no docs case
+                msg = "I couldn't find any relevant documents regarding your query."
+                yield "data: " + json.dumps({"content": msg}) + "\n\n"
+                rag_response_buffer = msg
+            else:
+                # Stream the RAG response chunks
+                for chunk in self._generate_response_stream(
+                    query,
+                    unique_results,
+                    is_personal_batch,
+                    user_profile,
+                    include_final_done=False,
+                ):
+                    # Send chunk to UI
+                    yield chunk
 
-            # Debug: write reranked chunks to a log file for inspection
-            try:
-                from pathlib import Path
+                    # Accumulate for analysis
+                    try:
+                        data = json.loads(chunk.replace("data: ", "").strip())
+                        if data.get("done"):
+                            # We control the final done message outside this loop.
+                            continue
+                        if "content" in data:
+                            rag_response_buffer += data["content"]
+                    except:
+                        pass
 
-                debug_dir = Path("logs")
-                debug_dir.mkdir(exist_ok=True)
-                log_path = debug_dir / "reranked_chunks.txt"
-                with open(log_path, "w", encoding="utf-8") as log_file:
-                    log_file.write(f"Query: {query}\n")
-                    log_file.write(
-                        f"Total reranked: {len(unique_results)} (showing top {min(50, len(unique_results))})\n\n"
-                    )
-                    for i, r in enumerate(
-                        unique_results[: min(50, len(unique_results))], 1
-                    ):
-                        meta = r.get("metadata", {}) or {}
-                        filename = meta.get("filename", "Unknown")
-                        page = meta.get("page_number", "N/A")
-                        plan_ctx = ", ".join(meta.get("plan_context") or [])
-                        snippet = (r.get("content") or "").replace("\n", " ")[:400]
-                        log_file.write(
-                            f"#{i} {filename} p{page} | plans: {plan_ctx}\n{snippet}\n\n"
-                        )
-            except Exception as debug_err:
-                print(f"[DEBUG] Failed to write reranked chunk log: {debug_err}")
+            # =====================================================
+            # PHASE 2: ANALYZE & TRANSITION
+            # =====================================================
 
-            # Prepare context early for potential deep research use
-            profile_info, context_from_docs = self._prepare_context(
-                unique_results, is_personal_batch, user_profile
-            )
+            # Note: We have NOT sent {"done": True} yet. The stream is still open.
 
-            # Check if no results found
-            if not unique_results:
-                if is_personal_batch:
-                    error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
-                else:
-                    error_msg = f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
-                yield "data: " + json.dumps(
-                    {"content": error_msg, "done": True}
-                ) + "\n\n"
-                return
+            should_deep_research = False
 
-            # ===== NEW: ANALYZE → RETRY LOGIC =====
-            # Step 1: Try normal RAG first (stream AND collect, but don't show to user yet)
-            print("🔄 Attempting normal RAG response...")
-            normal_response_chunks = []
-            stored_rag_chunks = []
+            if self.deep_research_enabled:
+                response_analyzer = ResponseAnalyzer()
 
-            for chunk in self._generate_response_stream(
-                query, unique_results, is_personal_batch, user_profile
-            ):
-                stored_rag_chunks.append(chunk)  # Store for later
-                # Collect for analysis
-                try:
-                    chunk_data = json.loads(chunk.replace("data: ", "").strip())
-                    if "content" in chunk_data:
-                        normal_response_chunks.append(chunk_data["content"])
-                except:
-                    pass  # Ignore parsing errors for "done" chunks
+                # Analyze the buffer we just collected
+                is_satisfactory = response_analyzer._analyze_response_quality(
+                    query, rag_response_buffer, user_profile
+                )
 
-            # Step 2: Analyze the collected response quality
-            full_response = "".join(normal_response_chunks)
-            response_analyzer = ResponseAnalyzer()
-            is_satisfactory = response_analyzer._analyze_response_quality(
-                query, full_response, user_profile
-            )
+                if not is_satisfactory:
+                    should_deep_research = True
 
-            # Step 3: If bad → trigger deep research
-            print(
-                f"🔍 DEBUG: is_satisfactory={is_satisfactory}, deep_research_enabled={self.deep_research_enabled}"
-            )
-            if not is_satisfactory and self.deep_research_enabled:
-                print("⚠️ Normal RAG response insufficient. Triggering deep research...")
-                # Notify user
-                yield "data: " + json.dumps(
-                    {
-                        "status": "enhancing_response",
-                        "message": "Let me search for more comprehensive information...",
-                    }
-                ) + "\n\n"
+            # =====================================================
+            # PHASE 3: DEEP RESEARCH (If needed)
+            # =====================================================
 
-                # Run deep research
+            if should_deep_research:
+                print("⚠️ Initial response insufficient. Triggering Deep Research...")
+
+                # --- THE VISUAL SEPARATOR ---
+                # This creates a visual break in the UI to look like a "new section"
+                # You can also use **Bold Text** to announce the status change.
+                transition_msg = (
+                    "\n\n"
+                    "---\n"
+                    "**🕵️ Deep Research Triggered**\n"
+                    "I am now performing a deeper analysis of your documents and external sources. Please wait...\n\n"
+                )
+
+                yield "data: " + json.dumps({"content": transition_msg}) + "\n\n"
+
+                # Prepare fresh context
+                profile_info, context_from_docs = self._prepare_context(
+                    unique_results, is_personal_batch, user_profile
+                )
+
+                # Run Deep Research Stream
                 from src.run_ui import run_ui
 
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-
                 try:
                     async_gen = run_ui(
                         query=query,
@@ -1229,27 +1583,16 @@ class QueryProcessor:
                 finally:
                     loop.close()
 
-                print("✅ Deep research completed.")
-            else:
-                print("✅ Normal RAG response satisfactory. Streaming to user...")
-                # Yield ALL stored RAG chunks
-                for chunk in stored_rag_chunks:
-                    yield chunk
-
-            # Signal completion
+            # =====================================================
+            # DONE
+            # =====================================================
             yield "data: " + json.dumps({"done": True}) + "\n\n"
-
-            processing_time = time.time() - start_time
-            print(f"Total processing time: {processing_time:.2f}s")
 
         except Exception as e:
             import traceback
 
-            print(f"An unexpected error occurred in process_query_stream: {e}")
             traceback.print_exc()
-            yield "data: " + json.dumps(
-                {"error": f"An error occurred while processing your query: {e}"}
-            ) + "\n\n"
+            yield "data: " + json.dumps({"error": str(e)}) + "\n\n"
 
     # def _generate_response_stream(
     #     self,
@@ -1397,6 +1740,7 @@ class QueryProcessor:
         search_results: List[Dict],
         is_personal_batch: bool,
         user_profile: Optional[Dict],
+        include_final_done: bool = True,
     ):
         """
         Generate streaming response using Gemini Flash (Synchronous Version).
@@ -1405,9 +1749,10 @@ class QueryProcessor:
             yield "data: " + json.dumps(
                 {
                     "content": "I couldn't find any relevant information in the documents to answer your question.",
-                    "done": True,
                 }
             ) + "\n\n"
+            if include_final_done:
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
             return
 
         context_parts = []
@@ -1433,9 +1778,10 @@ class QueryProcessor:
             yield "data: " + json.dumps(
                 {
                     "content": "Error: Found relevant documents but failed to extract content for context.",
-                    "done": True,
                 }
             ) + "\n\n"
+            if include_final_done:
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
             return
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
