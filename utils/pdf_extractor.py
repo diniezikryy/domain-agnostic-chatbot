@@ -8,8 +8,12 @@ from typing import List, Dict, Any
 
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
-from azure.ai.formrecognizer import DocumentAnalysisClient
-from azure.core.credentials import AzureKeyCredential
+try:
+    from azure.ai.formrecognizer import DocumentAnalysisClient
+    from azure.core.credentials import AzureKeyCredential
+    _AZURE_AVAILABLE = True
+except Exception:
+    _AZURE_AVAILABLE = False
 
 load_dotenv()
 
@@ -196,6 +200,85 @@ def extract_pages_with_azure(
     # Sort outputs by page_num just in case
     page_outputs.sort(key=lambda x: x["page_num"])
     return page_outputs
+
+
+def extract_pages_local(pdf_path: str) -> List[Dict[str, Any]]:
+    """
+    Local, free PDF extraction fallback using PyMuPDF (fitz) and pdfplumber for table extraction.
+
+    Returns a list of {'page_num': int, 'text': str} objects.
+    """
+    pages_out: List[Dict[str, Any]] = []
+    path = Path(pdf_path)
+
+    # Prefer pdfplumber for table extraction if available, fallback to fitz text otherwise
+    use_pdfplumber = False
+    try:
+        import pdfplumber
+
+        use_pdfplumber = True
+    except Exception:
+        use_pdfplumber = False
+
+    if use_pdfplumber:
+        try:
+            import pdfplumber
+
+            with pdfplumber.open(pdf_path) as pdf:
+                for i, page in enumerate(pdf.pages, start=1):
+                    parts: List[str] = []
+
+                    # Table extraction (if present) - convert to simple markdown table
+                    tables = page.extract_tables()
+                    table_texts = []
+                    for t in tables:
+                        # Convert rows to pipe-delimited markdown table
+                        if not t:
+                            continue
+                        header = t[0]
+                        rows = t[1:] if len(t) > 1 else []
+                        md_lines = []
+                        md_lines.append("|" + "|".join([str(x or "").strip() for x in header]) + "|")
+                        md_lines.append("|" + "|".join(["---" for _ in header]) + "|")
+                        for r in rows:
+                            md_lines.append("|" + "|".join([str(x or "").strip() for x in r]) + "|")
+                        table_md = "\n".join(md_lines)
+                        table_texts.append(table_md)
+
+                    if table_texts:
+                        parts.append("\n\n".join(table_texts))
+
+                    try:
+                        text = page.extract_text() or ""
+                    except Exception:
+                        text = ""
+
+                    if text:
+                        parts.append(text)
+
+                    page_text = "\n\n".join(parts).strip()
+                    pages_out.append({"page_num": i, "text": page_text})
+
+            return pages_out
+        except Exception:
+            # Fall through to fitz-based extraction if pdfplumber fails
+            pass
+
+    # Fallback: use PyMuPDF directly
+    try:
+        import fitz
+
+        doc = fitz.open(str(path))
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            text = page.get_text("text") or ""
+            pages_out.append({"page_num": i + 1, "text": text.strip()})
+        doc.close()
+    except Exception:
+        # If everything fails, return empty list
+        return []
+
+    return pages_out
 
 
 if __name__ == "__main__":

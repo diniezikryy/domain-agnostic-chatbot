@@ -82,6 +82,64 @@ def reciprocal_rank_fusion(
     return combined_results[:top_k]
 
 
+def weighted_reciprocal_rank_fusion(
+    faiss_results: List[Dict[str, Any]],
+    bm25_results: List[Dict[str, Any]],
+    k: int = 60,
+    top_k: int = 10,
+    faiss_weight: float = 0.4,
+    bm25_weight: float = 0.6,
+) -> List[Dict[str, Any]]:
+    """
+    Weighted Reciprocal Rank Fusion.
+
+    Allows different weights for the vector (FAISS) and keyword (BM25) ranks.
+    Useful for domains that prefer exact keyword matches (insurance).
+
+    Args:
+        faiss_results: FAISS ranked list
+        bm25_results: BM25 ranked list
+        k: RRF constant
+        top_k: number of final results
+        faiss_weight: weight for FAISS contributions
+        bm25_weight: weight for BM25 contributions
+
+    Returns:
+        Combined result list with 'rrf_score' field set
+    """
+    # Index results by content
+    content_to_doc: Dict[str, Dict[str, Any]] = {}
+    rrf_scores: Dict[str, float] = {}
+
+    def _add_list_contrib(results, weight, list_name: str):
+        for result in results:
+            content = result.get("content", "")
+            if not content:
+                continue
+
+            if content not in content_to_doc:
+                content_to_doc[content] = result.copy()
+                rrf_scores[content] = 0.0
+                content_to_doc[content]["rrf_source_lists"] = []
+
+            rank = result.get("rank", 0)
+            rrf_scores[content] += weight * (1.0 / (k + rank))
+            content_to_doc[content]["rrf_source_lists"].append(list_name)
+
+    # Add contributions
+    _add_list_contrib(faiss_results, faiss_weight, "faiss")
+    _add_list_contrib(bm25_results, bm25_weight, "bm25")
+
+    # Build final list
+    combined_results = []
+    for content, doc in content_to_doc.items():
+        doc["rrf_score"] = rrf_scores[content]
+        combined_results.append(doc)
+
+    combined_results.sort(key=lambda x: x["rrf_score"], reverse=True)
+    return combined_results[:top_k]
+
+
 def reciprocal_rank_fusion_multi(
     ranked_lists: List[List[Dict[str, Any]]],
     k: int = 60,

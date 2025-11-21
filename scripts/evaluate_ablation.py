@@ -113,14 +113,27 @@ async def run_ablation_study(
             
             # Load results
             df = pd.read_csv(output_csv)
+            # Only aggregate the metrics we expect to be numeric
+            numeric_metrics = [
+                "faithfulness",
+                "context_precision",
+                "context_recall",
+                "answer_relevancy",
+                "semantic_similarity",
+                "context_utilization",
+            ]
+            metrics_summary = {}
+            for m in numeric_metrics:
+                if m in df.columns:
+                    try:
+                        metrics_summary[m] = float(df[m].mean())
+                    except Exception:
+                        metrics_summary[m] = None
+
             results[config["name"]] = {
                 "config": config,
                 "csv_path": str(output_csv),
-                "metrics": {
-                    col.replace("user_input", "question"): df[col].mean()
-                    for col in df.columns
-                    if col not in ["user_input", "response", "retrieved_contexts"]
-                },
+                "metrics": metrics_summary,
             }
             
             print(f"✓ {config['name']} complete")

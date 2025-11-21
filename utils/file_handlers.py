@@ -9,7 +9,12 @@ import json
 from docx import Document
 from dotenv import load_dotenv
 
-from .pdf_extractor import extract_pages_with_azure
+from .pdf_extractor import (
+    extract_pages_with_azure,
+    extract_pages_local,
+    _AZURE_AVAILABLE,
+)
+from config.optimization_settings import optimization_settings
 
 load_dotenv()
 
@@ -22,8 +27,13 @@ class FileHandler:
         self.azure_endpoint = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
         self.azure_key = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
 
-        if not self.azure_endpoint or not self.azure_key:
-            raise ValueError("Azure credentials not found in environment variables")
+        # Use Azure Document Intelligence if credentials are present and SDK is available.
+        # Otherwise fall back to a local PyMuPDF/pdfplumber extractor for free re-indexing.
+        self.use_azure = bool(self.azure_endpoint and self.azure_key and _AZURE_AVAILABLE)
+        if not self.use_azure:
+            print(
+                "[INFO] Azure Document Intelligence not enabled or unavailable. Using local PDF extraction fallback (no paid credits required)."
+            )
 
         # Optionally load OpenAI key here, or inside the LLM method
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -57,9 +67,13 @@ class FileHandler:
             suffix = file_path.suffix.lower()
 
             if suffix == ".pdf":
-                page_texts = extract_pages_with_azure(
-                    str(file_path), self.azure_endpoint, self.azure_key
-                )
+                if self.use_azure:
+                    page_texts = extract_pages_with_azure(
+                        str(file_path), self.azure_endpoint, self.azure_key
+                    )
+                else:
+                    # Use a local, free extractor so users can reindex without Azure.
+                    page_texts = extract_pages_local(str(file_path))
             elif suffix == ".docx":
                 page_texts = self._extract_docx_text(file_path)
             elif suffix in {".txt", ".md"}:
@@ -94,6 +108,8 @@ class FileHandler:
             all_metadata: List[Dict[str, Any]] = []
 
             # 3) Iterate over pages and split into sub-chunks
+            # Build a full document text used for parent document context
+            document_text = "\n\n".join(p["text"] for p in page_texts)
             for page_info in page_texts:
                 page_num = page_info["page_num"]
                 page_content = page_info["text"]
@@ -139,6 +155,17 @@ class FileHandler:
                 # Split this page into smaller semantic chunks
                 sub_chunks = self._split_page_into_chunks(page_content, page_num)
 
+                # Pre-compute section-style headings for parent section mapping
+                page_headings = self._extract_section_headers(page_content)
+
+                # Pre-compute document-level summary (do once per file) for the optimized pipeline
+                doc_summary = None
+                if enrich_with_llm and optimization_settings.ENABLE_OPTIMIZED_PIPELINE:
+                    try:
+                        doc_summary = self._generate_document_summary_llm(document_text)
+                    except Exception as e:
+                        print(f"[WARN] Document summary generation failed: {e}")
+
                 for sub in sub_chunks:
                     chunk_text = sub["chunk_text"]
                     chunk_index = sub["chunk_index"]
@@ -159,12 +186,40 @@ class FileHandler:
                         "file_type": suffix,
                     }
 
+                    # Add parent document and parent section metadata
+                    # Add parent document metadata only for optimized pipeline
+                    if optimization_settings.ENABLE_OPTIMIZED_PIPELINE:
+                        # parent_document_id is simply the absolute path - unique for each file
+                        metadata["parent_document_id"] = str(file_path)
+                        # Small document preview (first 3k chars) to keep metadata compact
+                        metadata["parent_document_text"] = (
+                            document_text[:3000] if len(document_text) > 3000 else document_text
+                        )
+
+                    # map chunk to nearest page heading (if any)
+                    if optimization_settings.ENABLE_OPTIMIZED_PIPELINE and sub.get("start_idx") is not None:
+                        section = self._get_parent_section_for_offset(page_headings, sub["start_idx"]) or {}
+                        metadata["parent_section_heading"] = section.get("heading") or page_heading
+                        metadata["parent_section_id"] = (
+                            f"{file_path.name}-p{page_num}-s{section.get('index')}"
+                            if section
+                            else f"{file_path.name}-p{page_num}-s0"
+                        )
+                        metadata["parent_section_text"] = (
+                            self._get_section_text(page_content, section)
+                            if section
+                            else page_content[:1500]
+                        )
+
                     # Optional LLM enrichment
                     if enrich_with_llm:
                         try:
                             extra = self._generate_chunk_metadata_llm(chunk_text)
                             if extra:
                                 metadata.update(extra)
+                            # Add precomputed per-document summary to each chunk's metadata
+                            if doc_summary:
+                                metadata["document_summary"] = doc_summary
                         except Exception as e:
                             # Don't blow up ingestion if enrichment fails
                             print(f"[WARN] LLM enrichment failed for {chunk_id}: {e}")
@@ -261,58 +316,106 @@ class FileHandler:
         text = page_content.replace("\r\n", "\n").replace("\r", "\n")
 
         # Split into paragraphs using double newlines as separators
-        raw_paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        raw_paragraphs = [p for p in text.split("\n\n")]
+        # Preserve paragraph spans so we can compute chunk offsets for parent section lookup
+        paragraph_spans: List[Dict[str, Any]] = []
+        ptr = 0
+        for para in raw_paragraphs:
+            if not para or not para.strip():
+                ptr += len(para) + 2  # account for the split separator
+                continue
+            # Find the next occurrence of this paragraph after the pointer
+            start_idx = text.find(para, ptr)
+            if start_idx == -1:
+                start_idx = ptr
+            end_idx = start_idx + len(para)
+            paragraph_spans.append({"text": para.strip(), "start": start_idx, "end": end_idx})
+            ptr = end_idx
 
         # If no paragraphs, treat whole page as one chunk
-        if not raw_paragraphs:
-            return [{"chunk_text": page_content.strip(), "chunk_index": 0}]
+        if not paragraph_spans:
+            return [{"chunk_text": page_content.strip(), "chunk_index": 0, "start_idx": 0, "end_idx": len(page_content)}]
 
         chunks: List[Dict[str, Any]] = []
         current = ""
         chunk_index = 0
+        current_paragraphs: List[Dict[str, Any]] = []
 
-        for para in raw_paragraphs:
+        for para in paragraph_spans:
             # Always ensure paragraphs are separated
-            candidate = (current + "\n\n" + para).strip() if current else para
+            candidate = (current + "\n\n" + para["text"]).strip() if current else para["text"]
 
             if len(candidate) <= max_chars:
+                # initialize start index of this chunk if not set
+                # (we track paragraph list instead of a separate variable)
                 current = candidate
+                current_paragraphs.append(para)
                 continue
 
             # If adding this paragraph would exceed max_chars, flush current chunk
             if current:
-                chunks.append(
-                    {"chunk_text": current.strip(), "chunk_index": chunk_index}
-                )
+                # Determine start and end indices for the current chunk from paragraphs
+                start_idx = current_paragraphs[0]["start"] if current_paragraphs else 0
+                end_idx = current_paragraphs[-1]["end"] if current_paragraphs else 0
+                chunk_obj = {
+                    "chunk_text": current.strip(),
+                    "chunk_index": chunk_index,
+                }
+                # Only attach start/end indices if optimized pipeline enabled
+                if optimization_settings.ENABLE_OPTIMIZED_PIPELINE:
+                    chunk_obj["start_idx"] = start_idx
+                    chunk_obj["end_idx"] = end_idx
+
+                chunks.append(chunk_obj)
                 chunk_index += 1
 
                 # Start new chunk with some overlap from the end of the previous chunk
                 if len(current) > overlap_chars:
                     overlap = current[-overlap_chars:]
-                    current = (overlap + "\n\n" + para).strip()
+                    current = (overlap + "\n\n" + para["text"]).strip()
                 else:
-                    current = para
+                    current = para["text"]
+                current_paragraphs = [para]
             else:
                 # Single paragraph longer than max_chars: hard-cut into pieces
-                remaining = para
-                while len(remaining) > max_chars:
-                    piece = remaining[:max_chars]
-                    chunks.append(
-                        {
-                            "chunk_text": piece.strip(),
-                            "chunk_index": chunk_index,
-                        }
-                    )
+                remaining_text = para["text"]
+                while len(remaining_text) > max_chars:
+                    piece = remaining_text[:max_chars]
+                    chunk_obj = {
+                        "chunk_text": piece.strip(),
+                        "chunk_index": chunk_index,
+                    }
+                    # Only add indices for optimized pipeline
+                    if optimization_settings.ENABLE_OPTIMIZED_PIPELINE:
+                        chunk_obj["start_idx"] = 0
+                        chunk_obj["end_idx"] = 0
+
+                    chunks.append(chunk_obj)
                     chunk_index += 1
-                    remaining = remaining[max_chars:]
-                current = remaining
+                    remaining_text = remaining_text[max_chars:]
+                current = remaining_text
+                current_paragraphs = [para]
 
         # Flush any remaining text as the last chunk
         if current and current.strip():
-            chunks.append({"chunk_text": current.strip(), "chunk_index": chunk_index})
+            start_idx = current_paragraphs[0]["start"] if current_paragraphs else 0
+            end_idx = current_paragraphs[-1]["end"] if current_paragraphs else 0
+            chunk_obj = {
+                "chunk_text": current.strip(),
+                "chunk_index": chunk_index,
+            }
+            if optimization_settings.ENABLE_OPTIMIZED_PIPELINE:
+                chunk_obj["start_idx"] = start_idx
+                chunk_obj["end_idx"] = end_idx
+
+            chunks.append(chunk_obj)
 
         if not chunks:
-            return [{"chunk_text": page_content.strip(), "chunk_index": 0}]
+            base = {"chunk_text": page_content.strip(), "chunk_index": 0}
+            if optimization_settings.ENABLE_OPTIMIZED_PIPELINE:
+                base["start_idx"] = 0
+                base["end_idx"] = len(page_content)
+            return [base]
 
         return chunks
 
@@ -364,6 +467,53 @@ class FileHandler:
                 deduped.append(p)
 
         return deduped
+
+    # ------------------------------------------------------------------
+    # Section extraction helpers
+    # ------------------------------------------------------------------
+    def _extract_section_headers(self, page_content: str) -> List[Dict[str, Any]]:
+        """Extract markdown-like headings and return a list with positions.
+
+        Returns a list of dicts: [{"index": int, "heading": str, "start": int, "end": int}]
+        """
+        headings = []
+        for idx, m in enumerate(re.finditer(r"^\s*(#{1,3})\s*(.+)$", page_content, re.MULTILINE)):
+            headings.append({"index": idx + 1, "heading": m.group(2).strip(), "start": m.start(), "end": None})
+
+        # If none found, return empty list; we'll fallback to page heading
+        if not headings:
+            return []
+
+        # compute end offsets
+        for i in range(len(headings)):
+            if i < len(headings) - 1:
+                headings[i]["end"] = headings[i + 1]["start"]
+            else:
+                headings[i]["end"] = len(page_content)
+
+        return headings
+
+    def _get_parent_section_for_offset(self, headings: List[Dict[str, Any]], offset: int) -> Dict[str, Any]:
+        """Return the last heading whose start is <= offset, or None."""
+        if not headings:
+            return None
+
+        candidate = None
+        for h in headings:
+            if h["start"] <= offset:
+                candidate = h
+            else:
+                break
+
+        return candidate
+
+    def _get_section_text(self, page_content: str, section: Dict[str, Any]) -> str:
+        if not section:
+            return ""
+        s = section.get("start", 0)
+        e = section.get("end", len(page_content))
+        text = page_content[s:e].strip()
+        return text if len(text) <= 3000 else text[:3000]
 
     # ------------------------------------------------------------------
     # LLM enrichment
@@ -429,3 +579,34 @@ class FileHandler:
                 str(x).strip() for x in likely_questions if str(x).strip()
             ],
         }
+
+    def _generate_document_summary_llm(self, document_text: str) -> str:
+        """Return a concise document-level summary for inclusion in metadata."""
+        if not self.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY not set in environment")
+
+        # Local import to avoid requiring openai at module import time
+        from openai import OpenAI
+
+        client = OpenAI(api_key=self.openai_api_key)
+
+        system_prompt = (
+            "You are a summarization assistant for insurance policy documents. "
+            "Provide a short 1-3 sentence summary describing the WHAT and WHO of the document, "
+            "focusing on plan types and coverage aspects. Return only the summary text."
+        )
+
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Document:\n\n{document_text[:5000]}"},
+            ],
+            response_format={"type": "text"},
+        )
+
+        try:
+            text = response.choices[0].message.content
+            return str(text).strip()
+        except Exception as e:
+            raise RuntimeError(f"Failed to generate document summary: {e}")

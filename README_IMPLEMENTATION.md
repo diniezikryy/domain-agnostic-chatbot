@@ -168,6 +168,52 @@ Add Q&A pairs to `scripts/golden_dataset.json`:
 - Compatible with async frameworks (FastAPI, aiohttp)
 - Enables parallel query processing
 
+### 5. Parent-level Context in Ingestion
+
+- We now enrich chunks with "parent section" and "parent document" metadata to improve retrieval and reranking.
+- The following fields are added to each chunk's metadata:
+    - `parent_document_id`: The absolute path of the source document
+    - `parent_document_text`: Short preview (first 3k chars) of the document
+    - `parent_section_id`: An identifier for the nearest section on the page
+    - `parent_section_heading`: The nearest heading above the chunk (if found)
+    - `parent_section_text`: Text content of that section (truncated to 3k chars)
+    - `document_summary`: Optional document-level summary created by a small LLM if `enrich_with_llm=True`.
+
+- These fields are appended to embeddings (FAISS) and BM25 search text to improve recall on queries that are influenced by nearby sections or global document summaries.
+
+Enable optimized pipeline and reindexing:
+
+To use these parent/section optimizations you must enable the optimized pipeline and rebuild your batch so the new parent-section fields are included in indexes. Two options:
+
+- Temporary (just for your current PowerShell session):
+    ```powershell
+    $env:ENABLE_OPTIMIZED_PIPELINE = 'true'
+    python setup_batch.py my_policies --rebuild
+    ```
+
+- Permanent (persist across sessions):
+    ```powershell
+    setx ENABLE_OPTIMIZED_PIPELINE 'true'
+    # Reopen PowerShell to make it take effect
+    python setup_batch.py my_policies --rebuild
+    ```
+
+Note: the optimized pipeline also toggles a few other internal behaviors such as weighted RRF and tiered reranker; you can review `config/optimization_settings.py` for tunables. If you plan to use `OptimizedQueryProcessor` without rebuilding your indexes, it will still apply tiered reranking, but parent section/document text will only appear in retrieval if the new indexes were built with the optimization flag.
+
+If you do not have Azure Document Intelligence (to avoid paid credits), you can still reindex locally using the built-in fallback extractor (PyMuPDF + pdfplumber). The extractor will be used automatically when Azure credentials are not set; set the `ENABLE_OPTIMIZED_PIPELINE` env var and re-run `setup_batch.py` to create an optimized batch with "parent_section" metadata included.
+
+Example (PowerShell):
+
+```powershell
+# Use local PDF extraction (no Azure key needed) and enable optimized pipeline
+Remove-Item Env:\AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT -ErrorAction SilentlyContinue
+Remove-Item Env:\AZURE_DOCUMENT_INTELLIGENCE_KEY -ErrorAction SilentlyContinue
+$env:ENABLE_OPTIMIZED_PIPELINE = 'true'
+python setup_batch.py my_policies_opt --rebuild --source documents/my_policies
+```
+
+Scanned PDFs (image-based): If your PDFs are scanned images, local text extraction requires OCR, e.g., Tesseract. You can install Tesseract and `pytesseract` and then implement an OCR fallback; current default uses text-based extraction (PyMuPDF/pdfplumber) which works well for machine-generated PDFs.
+
 ### Backward Compatibility
 - All existing streaming methods unchanged
 - `process_query_stream()` works as before

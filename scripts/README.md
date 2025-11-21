@@ -3,6 +3,45 @@
 This directory contains utilities for evaluating and testing the RAG pipeline.
 
 ## Files
+### generate_openai_dataset.py
+Generate synthetic Q&A dataset using OpenAI. This script loads local documents from a directory, sends an excerpt to an OpenAI model, and writes a JSON dataset suitable for RAG evaluation. It expects an `OPENAI_API_KEY` in your environment or `--openai-key` on the command line.
+
+**Usage:**
+```powershell
+# Set your key (PowerShell)
+$env:OPENAI_API_KEY = 'sk-...'
+python -m scripts.generate_openai_dataset --testset-size 20 --model gpt-4o-mini --output tests/data/generated_golden_dataset_openai.json
+```
+
+This is the recommended approach if you prefer generating ground truths via OpenAI models. If you previously used a Gemini-based generator, the consolidated `generate_ragas_dataset.py` supports Google/Gemini via the `--provider google` flag.
+
+### generate_ragas_dataset.py
+Generate synthetic Q&A dataset using RAGAS `TestsetGenerator` when available, with provider support for OpenAI and Gemini.
+
+Features:
+- Builds KnowledgeGraph (optional) and applies default transforms (optional)
+- Supports RAGAS TestsetGenerator if `ragas` is installed; otherwise falls back to the OpenAI generator
+- Allows provider selection with `--provider openai|google` and model overrides
+- Writes JSON list of {question, ground_truth} suitable for `evaluate_rag.py`
+
+Usage (fallback/quick):
+```powershell
+python scripts/generate_ragas_dataset.py --testset-size 20 --provider openai --output tests/data/generated_golden_dataset_ragas.json
+```
+
+Usage (RAGAS + KG generation):
+```powershell
+# Set keys
+$env:OPENAI_API_KEY = 'sk-...'
+# If using Google
+$env:GOOGLE_API_KEY = 'AIza...'
+
+python scripts/generate_ragas_dataset.py --testset-size 50 --provider openai --use-kg --apply-transforms --output tests/data/generated_golden_dataset_ragas.json
+```
+
+If you need to tune distributions for simple/multi/reasoning samples, you can pass `--simple-weight`, `--multi-weight`, `--reasoning-weight`.
+
+
 
 ### evaluate_rag.py
 Main evaluation framework using RAGAS metrics.
@@ -73,6 +112,9 @@ python -m scripts.evaluate_rag --dataset tests/data/golden_dataset.json --batch 
 
 # To explicitly evaluate with a user profile (opt-in only):
 python -m scripts.evaluate_rag --dataset tests/data/golden_dataset.json --batch user_3 --output evaluation/results/ragas_with_profile.csv --profile test_data/user_profile.json
+
+# Fast iteration mode (skips ragas LLM metrics, only logs retrieval metadata)
+python -m scripts.evaluate_rag --dataset tests/data/golden_dataset.json --batch my_policies --output evaluation/results/ragas_no_llm.csv --skip-llm
 ```
 
 ## Extending the Evaluator
@@ -182,3 +224,13 @@ Results are saved to `../evaluation/results.json`:
 3. Track metrics over time for regression detection
 4. Use results to identify optimization opportunities
 5. Implement CI/CD integration for automated evaluation
+6. Automated hyperparameter tuning has been consolidated; there is no maintained automated tuning script in this repo. Use `scripts/evaluate_rag.py` for evaluations and implement your own small tuning loop if needed.
+
+## Automated hyperparameter tuning
+
+There is no maintained automated tuning script bundled with this repository. To perform hyperparameter tuning:
+
+- Use `scripts/evaluate_rag.py` in a loop to run fast heuristic-only sweeps (`--skip-llm`) and/or full RAGAS evaluations.
+- Collect CSV outputs in a directory and write a small tuning driver if you need a permanent automated tool.
+
+If you'd like, we can add a small, stable tuning wrapper (without LLM calls by default) in a future update; open an issue and I'll prepare a safe, minimal implementation.

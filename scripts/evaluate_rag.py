@@ -12,15 +12,23 @@ Usage (example):
 
 """
 import asyncio
+from dotenv import load_dotenv
+load_dotenv()
 import csv
 import json
 import os
+import re
+from collections import Counter
 from pathlib import Path
 from typing import List, Dict, Any, Optional, cast
 
 import pandas as pd
 
 from openai import AsyncOpenAI
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except ImportError:
+    ChatGoogleGenerativeAI = None
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from ragas import EvaluationDataset, SingleTurnSample, aevaluate
 from ragas.dataset_schema import SingleTurnSampleOrMultiTurnSample
@@ -28,6 +36,7 @@ from ragas.llms import llm_factory
 from ragas.llms.base import BaseRagasLLM, LangchainLLMWrapper
 from ragas.run_config import RunConfig
 from ragas.embeddings.base import BaseRagasEmbeddings
+from ragas.embeddings import LangchainEmbeddingsWrapper
 # from ragas.embeddings.base import embedding_factory
 try:
     # Preferred location for Ragas' latest versions
@@ -57,6 +66,39 @@ from query_processor import QueryProcessor
 
 # MockResponse and OpenAILLM removed in favor of LangchainLLMWrapper
 
+
+
+def _token_counts(text: str) -> tuple[Counter, int]:
+    tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return Counter(tokens), len(tokens)
+
+
+def compute_heuristics(question: str, response: str, reference: str) -> Dict[str, float]:
+    resp_counts, resp_len = _token_counts(response)
+    ref_counts, ref_len = _token_counts(reference)
+    question_counts, question_len = _token_counts(question)
+
+    overlap_with_ref = (resp_counts & ref_counts)
+    overlap_tokens = sum(overlap_with_ref.values())
+    precision = overlap_tokens / resp_len if resp_len else 0.0
+    recall = overlap_tokens / ref_len if ref_len else 0.0
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if precision and recall
+        else 0.0
+    )
+
+    question_overlap = sum((resp_counts & question_counts).values())
+    question_focus = question_overlap / question_len if question_len else 0.0
+
+    return {
+        "heuristic_answer_precision": precision,
+        "heuristic_answer_recall": recall,
+        "heuristic_answer_f1": f1,
+        "heuristic_question_focus": question_focus,
+        "heuristic_response_tokens": float(resp_len),
+        "heuristic_reference_tokens": float(ref_len),
+    }
 
 
 class HybridEmbeddings(BaseRagasEmbeddings):
@@ -97,7 +139,12 @@ async def evaluate_dataset(
     provider: str = "openai",
     profile_path: Optional[str] = None,
     pipeline: str = "baseline",
+    skip_llm: bool = False,
 ):
+    # Ensure we force generation provider for pipelines to match evaluation provider
+    if provider:
+        os.environ.setdefault("GENERATION_PROVIDER", provider)
+
     # Load dataset
     dataset_file = Path(dataset_path)
     if not dataset_file.exists():
@@ -117,56 +164,80 @@ async def evaluate_dataset(
         )
 
     client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    
-    # Use LangchainLLMWrapper to avoid AttributeError: 'InstructorLLM' object has no attribute 'agenerate_prompt'
-    # when using llm_factory with Ragas metrics that expect text generation.
-    if provider == "openai":
-        langchain_llm = ChatOpenAI(model=evaluator_model, api_key=os.getenv("OPENAI_API_KEY"))
-        llm = LangchainLLMWrapper(langchain_llm)
+
+    metric_suite = []
+    run_config: Optional[RunConfig] = None
+    METRIC_TIMEOUT = int(os.getenv("METRIC_TIMEOUT", "180"))  # default for retrieval/generation
+
+    if skip_llm:
+        print("[INFO] --skip-llm enabled: ragas metrics will be skipped. Only retrieval metadata will be recorded.")
     else:
-        # Fallback for other providers if needed, though this script focuses on OpenAI
-        # If we used llm_factory here, it would return InstructorLLM which might fail with metrics
-        # that expect agenerate_prompt. For now, we default to OpenAI/Langchain wrapper.
-        print(f"[WARN] Provider '{provider}' requested but script defaults to OpenAI via LangchainLLMWrapper.")
-        langchain_llm = ChatOpenAI(model=evaluator_model, api_key=os.getenv("OPENAI_API_KEY"))
-        llm = LangchainLLMWrapper(langchain_llm)
+        # HYBRID SETUP: Use Gemini LLM (for judging) + OpenAI Embeddings (for vector similarity)
+        if provider.lower() == "google":
+            # Use Gemini via langchain-google-genai wrapper
+            if ChatGoogleGenerativeAI is None:
+                raise ImportError(
+                    "langchain-google-genai is not installed. Please install it:\n"
+                    "  pip install langchain-google-genai"
+                )
+            # Support multiple env-var names (GEMINI_API_KEY or GOOGLE_API_KEY) to be flexible
+            google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if not google_api_key:
+                raise EnvironmentError(
+                    "GOOGLE_API_KEY or GEMINI_API_KEY is not set. Please set it in your environment before running the evaluation."
+                    " In PowerShell: $env:GOOGLE_API_KEY='your-key-here'"
+                )
+            
+            # Create Gemini LLM using langchain wrapper
+            gemini_llm = ChatGoogleGenerativeAI(
+                model=evaluator_model,
+                google_api_key=google_api_key,
+                temperature=0  # Deterministic for evaluation
+            )
+            llm = LangchainLLMWrapper(gemini_llm)
+            print(f"[INFO] Using Gemini LLM ({evaluator_model}) for RAGAS evaluation metrics")
+            
+        elif provider == "openai":
+            langchain_llm = ChatOpenAI(model=evaluator_model, api_key=os.getenv("OPENAI_API_KEY"))
+            llm = LangchainLLMWrapper(langchain_llm)
+            print(f"[INFO] Using OpenAI LLM ({evaluator_model}) for RAGAS evaluation metrics")
+        else:
+            # Fallback for other providers if needed; default to OpenAI
+            print(f"[WARN] Provider '{provider}' requested but script defaults to OpenAI via LangchainLLMWrapper.")
+            langchain_llm = ChatOpenAI(model=evaluator_model, api_key=os.getenv("OPENAI_API_KEY"))
+            llm = LangchainLLMWrapper(langchain_llm)
 
-    # No adapter needed since we implement agenerate_prompt
+        # ALWAYS use OpenAI embeddings for answer relevancy and similarity
+        # (consistent with existing setup; only LLM provider changes)
+        base_embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            api_key=os.getenv("OPENAI_API_KEY")
+        )
+        embeddings = LangchainEmbeddingsWrapper(base_embeddings)
 
-    # embeddings for answer relevancy and similarity
-    # Use HybridEmbeddings to satisfy both Langchain-style (embed_query) and Ragas-style (embed_text) requirements
-    base_embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small", 
-        api_key=os.getenv("OPENAI_API_KEY")
-    )
-    embeddings = HybridEmbeddings(base_embeddings)
+        # Metrics (collections API ensures correct async usage per docs)
+        faith = Faithfulness(llm=llm)
+        ctx_prec = ContextPrecision(llm=llm)
+        ctx_recall = ContextRecall(llm=llm)
+        ans_rel = AnswerRelevancy(llm=llm, embeddings=embeddings)
+        sem_sim = SemanticSimilarity(embeddings=embeddings)
+        ctx_util = ContextUtilization(llm=llm)
+        metric_suite = [faith, ctx_prec, ctx_recall, ans_rel, sem_sim, ctx_util]
 
-    # Metrics (collections API ensures correct async usage per docs)
-    faith = Faithfulness(llm=llm)
-    ctx_prec = ContextPrecision(llm=llm)
-    ctx_recall = ContextRecall(llm=llm)
-    ans_rel = AnswerRelevancy(llm=llm, embeddings=embeddings)
-    sem_sim = SemanticSimilarity(embeddings=embeddings)
-    ctx_util = ContextUtilization(llm=llm)
-    metric_suite = [faith, ctx_prec, ctx_recall, ans_rel, sem_sim, ctx_util]
+        # RunConfig lets ragas handle retries/parallelism, matching docs guidance
+        ragas_timeout = int(os.getenv("RAGAS_TIMEOUT", str(METRIC_TIMEOUT)))
+        ragas_max_workers = int(os.getenv("RAGAS_MAX_WORKERS", os.getenv("EVAL_CONCURRENCY", "5")))
+        ragas_max_retries = int(os.getenv("RAGAS_MAX_RETRIES", "3"))
+        ragas_max_wait = int(os.getenv("RAGAS_MAX_WAIT", "120"))
+        ragas_seed = int(os.getenv("RAGAS_SEED", "42"))
 
-    # Timeouts (seconds) for async operations to avoid indefinite hangs
-    METRIC_TIMEOUT = int(os.getenv("METRIC_TIMEOUT", "180"))  # Increased to 180s for LLM calls
-
-    # RunConfig lets ragas handle retries/parallelism, matching docs guidance
-    ragas_timeout = int(os.getenv("RAGAS_TIMEOUT", str(METRIC_TIMEOUT)))
-    ragas_max_workers = int(os.getenv("RAGAS_MAX_WORKERS", os.getenv("EVAL_CONCURRENCY", "5")))
-    ragas_max_retries = int(os.getenv("RAGAS_MAX_RETRIES", "3"))
-    ragas_max_wait = int(os.getenv("RAGAS_MAX_WAIT", "120"))  # Increased to 120s
-    ragas_seed = int(os.getenv("RAGAS_SEED", "42"))
-
-    run_config = RunConfig(
-        timeout=ragas_timeout,
-        max_retries=ragas_max_retries,
-        max_wait=ragas_max_wait,
-        max_workers=ragas_max_workers,
-        seed=ragas_seed,
-    )
+        run_config = RunConfig(
+            timeout=ragas_timeout,
+            max_retries=ragas_max_retries,
+            max_wait=ragas_max_wait,
+            max_workers=ragas_max_workers,
+            seed=ragas_seed,
+        )
     # Start QueryProcessor with selected pipeline
     bm = BatchManager()
     
@@ -263,6 +334,8 @@ async def evaluate_dataset(
                 response_text = ""
 
             # Build ragas single-turn input payload & metadata snapshot
+            heuristics = compute_heuristics(question, response_text, ground_truth)
+
             sample_result: Dict[str, Any] = {
                 "question": question,
                 "ground_truth": ground_truth,
@@ -272,6 +345,7 @@ async def evaluate_dataset(
                 "pipeline": pipeline,  # Track which pipeline was used
                 "retrieved_contexts": json.dumps(retrieved_texts, ensure_ascii=False),
             }
+            sample_result.update(heuristics)
             ragas_sample = SingleTurnSample(
                 user_input=question,
                 response=response_text or "",
@@ -301,18 +375,21 @@ async def evaluate_dataset(
     show_progress = os.getenv("RAGAS_SHOW_PROGRESS", "1").lower() not in {"0", "false", "no"}
 
     metrics_df = None
-    try:
-        print("[INFO] Running ragas.aevaluate with official dataset schema...")
-        evaluation_result: Any = await aevaluate(
-            dataset=eval_dataset,
-            metrics=metric_suite,
-            run_config=run_config,
-            raise_exceptions=False,
-            show_progress=show_progress,
-        )
-        metrics_df = evaluation_result.to_pandas().reset_index(drop=True)
-    except Exception as eval_error:
-        print(f"[ERROR] RAGAS evaluation failed: {eval_error}")
+    if skip_llm:
+        print("[INFO] Skipping ragas.aevaluate (--skip-llm active). Only retrieval metadata will be saved.")
+    else:
+        try:
+            print("[INFO] Running ragas.aevaluate with official dataset schema...")
+            evaluation_result: Any = await aevaluate(
+                dataset=eval_dataset,
+                metrics=metric_suite,
+                run_config=run_config,
+                raise_exceptions=False,
+                show_progress=show_progress,
+            )
+            metrics_df = evaluation_result.to_pandas().reset_index(drop=True)
+        except Exception as eval_error:
+            print(f"[ERROR] RAGAS evaluation failed: {eval_error}")
 
     df_meta = pd.DataFrame(metadata_rows)
     if metrics_df is not None:
@@ -350,9 +427,10 @@ def main():
     parser.add_argument("--output", default="evaluation/results/ragas_evaluation.csv", help="CSV output path")
     parser.add_argument("--top-k", type=int, default=8, help="Number of retrieved chunks to use")
     parser.add_argument("--evaluator-model", default="gpt-4o-mini", help="LLM model for evaluation (llm_factory) - e.g. gpt-4o-mini")
-    parser.add_argument("--provider", default="openai", help="LLM provider for ragas llm_factory (openai, oci, haystack, etc.)")
+    parser.add_argument("--provider", default="openai", help="LLM provider for ragas llm_factory (openai, google, anthropic, etc.)")
     parser.add_argument("--profile", default=None, help="Optional path to a user profile JSON. If omitted, evaluation will not use a user profile.")
     parser.add_argument("--pipeline", choices=["baseline", "optimized"], default="baseline", help="Pipeline to use: 'baseline' (weighted sum + heuristics) or 'optimized' (RRF + cross-encoder)")
+    parser.add_argument("--skip-llm", action="store_true", help="Skip ragas LLM-based metrics and only record retrieval metadata")
 
     args = parser.parse_args()
 
@@ -366,6 +444,7 @@ def main():
             args.provider,
             profile_path=args.profile,
             pipeline=args.pipeline,
+            skip_llm=args.skip_llm,
         )
     )
 

@@ -12,6 +12,9 @@ load_dotenv()
 import os
 from pathlib import Path
 from typing import Dict, Any
+import textwrap
+
+from src.prompt import system_prompt
 
 
 class Settings:
@@ -38,9 +41,9 @@ class Settings:
         # ============================================
         # RAG QUERY PROCESSOR SETTINGS
         # ============================================
-        self.SEARCH_TOP_K = 60
+        self.SEARCH_TOP_K = 15  # Reduced from 60 to minimize noise and improve faithfulness
         self.MAX_CONTEXT_CHUNKS = (
-            30  # Increased to 30 for multi-policy queries (10 per policy)
+            8  # Reduced from 30 to focus on highest-quality chunks
         )
 
         # Model settings for query expansion
@@ -109,7 +112,8 @@ Output only the search terms separated by spaces (no explanations):
         # ============================================
         # SYSTEM PROMPT - INSURANCE EXPERT
         # ============================================
-        self.INSURANCE_SYSTEM_PROMPT = """You are an expert financial advisor specializing in insurance policy analysis.
+        base_insurance_prompt = textwrap.dedent(
+            """You are an expert financial advisor specializing in insurance policy analysis.
 Your task is to answer the user's question with extreme precision, relevance, and personalization.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -179,9 +183,19 @@ PART 3: POLICY DOCUMENT CHUNKS (FOR CITATION & DETAILS ONLY)
 PART 4: RESPONSE RULES (FOLLOW EXACTLY IN THIS ORDER)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-IF THE QUESTION IS NOT ABOUT INSURANCE/POLICIES/COVERAGE:
+**CRITICAL: DIRECT ANSWER FIRST**
+- Always start your response with a DIRECT answer to the user's question
+- If asking YES/NO: Start with "YES" or "NO"
+- If asking about amounts: Start with the specific dollar amount or percentage
+- If asking about coverage: Start with "COVERED" or "NOT COVERED"
+- THEN provide supporting details, citations, and explanations
+- Example: "YES, you are covered. Your GREAT SupremeHealth policy covers kidney transplant treatment..."
+- Example: "NO, lifetime care is not covered due to exclusion... [details follow]"
+
+IF THE QUESTION IS CLEARLY NOT ABOUT INSURANCE (e.g., weather, sports, cooking, general knowledge UNRELATED to policies/coverage/claims):
 - Say: "I can only answer insurance and policy questions using the provided documents."
 - Do not attempt to answer anything outside insurance. Stop.
+- NOTE: Questions about medical conditions, treatments, policy coordination, coverage amounts ARE insurance questions.
 
 STEP 1: IDENTIFY WHAT THE USER IS ASKING ABOUT
 ───────────────────────────────────────────────────────────────────────
@@ -318,16 +332,18 @@ STEP 9: FORMAT & CLOSE
 - Opening: Direct policy-scoped answers
 - Body: Detailed breakdown with dollar amounts and citations
 - Closing: Summary or "next steps" (if appropriate)
-- DO NOT add conversational fluff:
+- DO NOT add conversational fluff or closing invitations:
 ✗ "Hope this helps!"
 ✗ "Feel free to ask more questions!"
 ✗ "Best regards,"
 ✗ "Let me know if you need clarification!"
 ✗ "If you have any other questions or need further assistance, please let me know."
+✗ "If you have any further questions about your coverage or need clarification on specific benefits, feel free to ask."
 ✗ "Please refer to your policy details for further clarification"
+✗ "Let me know if there's anything else I can help with"
 - No decorative arrows, emoji, or symbols. Plain text only.
 - If a specific amount is not found in the documents, explicitly say: "Amount not found in provided documents."
-- End cleanly after the last factual statement. Do NOT add offers to help, next questions, or calls to action. Do NOT append any closing invitations.
+- **CRITICAL: End your response IMMEDIATELY after the last factual statement. The very last sentence must be a FACT about coverage, benefits, or policy details. Do NOT add any sentence that offers help, invites questions, or suggests follow-up. Just STOP after the facts.**
 - The conversation continues - do not add closing pleasantries
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -382,7 +398,10 @@ NOW ANSWER THE USER'S QUESTION
 USER QUERY: {original_query}
 
 Follow PART 4 (STEP 1 → STEP 9) exactly. Begin your response now:
-"""
+        """
+        )
+        # Keep the base insurance system prompt without plan-scoped prefix
+        self.INSURANCE_SYSTEM_PROMPT = textwrap.dedent(base_insurance_prompt)
 
         # Embedding model (keep existing)
         self.embedding_model = "text-embedding-3-small"

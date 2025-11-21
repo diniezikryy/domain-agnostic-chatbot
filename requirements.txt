@@ -19,7 +19,7 @@ click==8.3.0
 cryptography==46.0.3
 distro==1.9.0
 et_xmlfile==2.0.0
-faiss-cpu==1.12.0
+faiss-cpu>=1.12.0
 Flask==3.1.2
 flask-cors==6.0.1
 Flask-JWT-Extended==4.7.1
@@ -31,6 +31,10 @@ google-cloud-documentai==3.7.0
 googleapis-common-protos==1.72.0
 grpcio==1.76.0
 grpcio-status==1.76.0
+# Google Gemini integration - recommended to use the LangChain wrapper. If you need the raw
+# Google Generative AI SDK (not required for this repo), install `google-generativeai` separately.
+langchain-google-genai==3.1.0
+google-ai-generativelanguage==0.9.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
@@ -43,8 +47,14 @@ datasets>=4.4.1
 # RAG evaluation and integration libraries
 ragas>=0.3.9
 langchain-openai>=1.0.3
+langchain>=1.0.8
+langchain-core==1.0.7
 # Cross-Encoder reranking and optimization
-sentence-transformers>=2.2.0
+sentence-transformers>=3.1.1
+transformers>=4.49.0
+tokenizers==0.21.4
+torch==2.4.1
+torchvision==0.19.1
 scipy>=1.9.0
 lxml==6.0.2
 MarkupSafe==3.0.3
@@ -53,8 +63,8 @@ multidict==6.7.0
 mypy_extensions==1.1.0
 numpy==2.2.4
 oauthlib==3.3.1
-openai==2.6.1
-opencv-python-headless==4.12.0.88
+openai>=2.6.1
+# opencv-python-headless==4.12.0.88  # disabled: conflicts with numpy >= 2.3.x required by faiss/torch
 openpyxl==3.1.5
 packaging
 pandas==2.2.2

@@ -1,11 +1,12 @@
 # utils/test_ingestion.py
-from .file_handlers import FileHandler
+# Import FileHandler lazily so pytest collection doesn't attempt to import Azure dependencies
 
 
 def main():
     # Path to a PDF you want to test (relative to project root)
     pdf_path = "documents/user_1/GREAT_SupremeHealth_Benefits.pdf"
 
+    from .file_handlers import FileHandler
     handler = FileHandler()
 
     print(f"Ingesting {pdf_path} with LLM enrichment enabled...")
@@ -30,7 +31,17 @@ def main():
         print("\nMETADATA:")
         for k, v in meta.items():
             print(f"  {k}: {v}")
+            # Print truncated parent_section_text for readability
+            if meta.get("parent_section_text"):
+                print("\n  parent_section_text preview:")
+                print(meta["parent_section_text"][:400])
+            if meta.get("document_summary"):
+                print("\n  document_summary:")
+                print(meta["document_summary"]) 
 
 
 if __name__ == "__main__":
+    # Move heavy imports here to avoid pytest collection failure
+    from .file_handlers import FileHandler
+
     main()

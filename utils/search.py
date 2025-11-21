@@ -12,6 +12,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 import json
 from pathlib import Path
+from config.optimization_settings import optimization_settings
 
 
 class SearchIndexBuilder:
@@ -46,6 +47,26 @@ class SearchIndexBuilder:
                 parts.append(" ".join(map(str, llm_likely_questions)))
             else:
                 parts.append(str(llm_likely_questions))
+
+        # Optionally add parent section and document summary to help retrieval
+        # (only when optimized pipeline is enabled and the specific index flags are on)
+        if optimization_settings.ENABLE_OPTIMIZED_PIPELINE:
+            # Add parent section and document summary to help retrieval
+            if getattr(optimization_settings, "INDEX_PARENT_SECTION_TEXT", True):
+                parent_section_text = metadata.get("parent_section_text")
+                if parent_section_text:
+                    try:
+                        if isinstance(parent_section_text, list):
+                            parts.append(" ".join(parent_section_text[:3]))
+                        else:
+                            parts.append(str(parent_section_text))
+                    except Exception:
+                        parts.append(str(parent_section_text))
+            # The document summary is usually created during ingestion (LLM)
+            if getattr(optimization_settings, "INDEX_DOCUMENT_SUMMARY", True):
+                document_summary = metadata.get("document_summary") or metadata.get("parent_document_text")
+                if document_summary:
+                    parts.append(str(document_summary))
 
         return "\n\n".join(parts)
 

@@ -45,19 +45,29 @@ class OptimizationSettings:
         # Higher k (60-100): More democratic fusion, better for diverse sources
         # Default 60 is robust across diverse retrieval pipelines per 2025 benchmarks
         self.RRF_K_CONSTANT = int(os.getenv("RRF_K_CONSTANT", "60"))
+        # Weighted RRF: give BM25 (keyword) more weight for insurance domain
+        # Values should sum to 1.0 (default: bm25 dominates)
+        self.RRF_BM25_WEIGHT = float(os.getenv("RRF_BM25_WEIGHT", "0.3"))
+        self.RRF_VECTOR_WEIGHT = float(os.getenv("RRF_VECTOR_WEIGHT", "0.7"))
         
         # ============================================
         # RERANKING PIPELINE SETTINGS
         # ============================================
         
         # Size of candidate pool to retrieve before reranking
-        # Research shows 25-50 candidates balances recall and computation cost
-        # 25 for general use, 50 for knowledge-intensive systems favoring recall
-        # Reduced from 100 to 25 based on empirical best practices
-        self.RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "25"))
+        # Research shows larger pools increase recall when paired with tighter final context windows
+        # Default raised to 70 based on Nov 2025 ablations (Both pipeline) using heuristic sweep results
+        self.RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "100"))
         
         # Final number of results to return after all reranking stages
+        # Default lowered to 7 to reduce distractors in the generation context
         self.RERANK_OUTPUT_K = int(os.getenv("RERANK_OUTPUT_K", "10"))
+        
+        # Minimum cross-encoder score threshold to filter low-quality chunks
+        # Chunks scoring below this threshold are discarded after cross-encoder reranking
+        # Range: 0.0-1.0, default 0.0 (disabled) to 0.3 for moderate filtering
+        # NOTE: Cross-encoder scores are often negative or low positive, so use conservative thresholds
+        self.MIN_RERANK_SCORE = float(os.getenv("MIN_RERANK_SCORE", "-10.0"))
         
         # ============================================
         # FEATURE FLAGS
@@ -72,6 +82,14 @@ class OptimizationSettings:
         # Enable optimized pipeline globally
         self.ENABLE_OPTIMIZED_PIPELINE = os.getenv("ENABLE_OPTIMIZED_PIPELINE", "false").lower() == "true"
 
+        # Fine-grained index controls
+        # Control whether parent section text is appended to the search index
+        self.INDEX_PARENT_SECTION_TEXT = os.getenv("INDEX_PARENT_SECTION_TEXT", "true").lower() == "true"
+        # Control whether document-level summary is appended to the search index
+        self.INDEX_DOCUMENT_SUMMARY = os.getenv("INDEX_DOCUMENT_SUMMARY", "true").lower() == "true"
+
+        # (MIN_CHUNK_SCORE and post-generation support-check settings removed)
+
     def get_config_summary(self):
         """Return a dictionary of current optimization settings."""
         return {
@@ -85,6 +103,8 @@ class OptimizationSettings:
             "use_cross_encoder": self.USE_CROSS_ENCODER,
             "use_rrf_fusion": self.USE_RRF_FUSION,
             "optimized_pipeline_enabled": self.ENABLE_OPTIMIZED_PIPELINE,
+            "index_parent_section_text": self.INDEX_PARENT_SECTION_TEXT,
+            "index_document_summary": self.INDEX_DOCUMENT_SUMMARY,
         }
 
 

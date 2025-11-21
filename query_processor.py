@@ -16,7 +16,14 @@ import re
 
 from openai import OpenAI
 from openai import AsyncOpenAI
-import google.generativeai as genai
+from functools import partial
+try:
+    # Prefer the LangChain Google wrapper for Gemini - keeps us compatible with installed langchain-core
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.messages import SystemMessage, HumanMessage
+except Exception:
+    # Fall back to raw google.generativeai if the LangChain wrapper is not available
+    import google.generativeai as genai
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
@@ -39,10 +46,27 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
 
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
+        # Accept both 'GOOGLE_API_KEY' and 'GEMINI_API_KEY' environment variables for flexibility
+        google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        # Allow tests and scripts to force the generation provider via env var
+        # GENERATION_PROVIDER='openai' will force OpenAI for generation, even
+        # if Gemini keys are present.
+        self.generation_provider = os.getenv("GENERATION_PROVIDER") or os.getenv("EVAL_LLM_PROVIDER", "gemini")
         self.model_name = "gemini-2.5-flash"
         self.deep_research_enabled = config.DEEP_RESEARCH_ENABLED
+        # If we have the LangChain Google wrapper installed, create a Geminai LLM instance
+        try:
+            # Only initialize Gemini LLM if generation provider permits it
+            if self.generation_provider.lower() != "openai" and ChatGoogleGenerativeAI is not None:
+                self.gemini_llm = ChatGoogleGenerativeAI(
+                    model=self.model_name,
+                    google_api_key=google_api_key,
+                    temperature=config.RESPONSE_TEMPERATURE,
+                )
+            else:
+                self.gemini_llm = None
+        except Exception:
+            self.gemini_llm = None
 
     async def run_retrieval(
         self,
@@ -321,23 +345,54 @@ class QueryProcessor:
         )
 
         try:
-            # --- GEMINI IMPLEMENTATION ---
-            system_instruction = "You are an expert financial advisor. Answer insurance questions using provided documents. Be concise and accurate."
-
-            model = genai.GenerativeModel(
-                model_name=self.model_name, system_instruction=system_instruction
-            )
-
-            response = await model.generate_content_async(
-                prompt_instructions,
-                generation_config=genai.types.GenerationConfig(
+            # If we are forced to use OpenAI for generation, use AsyncOpenAI
+            if (self.generation_provider or "").lower() == "openai":
+                async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                response = await async_client.chat.completions.create(
+                    model=config.RESPONSE_MODEL,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are an expert financial advisor. Answer insurance questions using provided documents. If the user asks for anything outside insurance/policies/coverage/claims, respond that you can only answer insurance questions and stop. Be concise and accurate.",
+                        },
+                        {"role": "user", "content": prompt_instructions},
+                    ],
+                    max_tokens=config.RESPONSE_MAX_TOKENS,
                     temperature=config.RESPONSE_TEMPERATURE,
-                    max_output_tokens=config.RESPONSE_MAX_TOKENS,
-                ),
-            )
+                )
 
-            return response.text
+                return response.choices[0].message.content
 
+            # Otherwise, prefer Gemini via LangChain wrapper where possible.
+            # Prefer using the LangChain wrapper where possible (it avoids raw
+            # genai dependency conflicts). If unavailable, fall back to the
+            # raw google.generativeai library.
+            system_instruction = "You are an expert financial advisor. Answer insurance questions using provided documents. Be concise and accurate."
+            # Messages: system + user
+            messages = [SystemMessage(content=system_instruction), HumanMessage(content=prompt_instructions)]
+
+            if self.gemini_llm is not None:
+                # ChatGoogleGenerativeAI.invoke is synchronous - run it in the default thread pool
+                loop = asyncio.get_running_loop()
+                invoker = partial(self.gemini_llm.invoke, messages)
+                response = await loop.run_in_executor(None, invoker)
+                # Response object from LangChain generator has 'content'
+                return getattr(response, "content", str(response))
+            else:
+                # Fallback: raw google.generativeai usage
+                model = genai.GenerativeModel(
+                    model_name=self.model_name, system_instruction=system_instruction
+                )
+
+                response = await model.generate_content_async(
+                    prompt_instructions,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=config.RESPONSE_TEMPERATURE,
+                        max_output_tokens=config.RESPONSE_MAX_TOKENS,
+                    ),
+                )
+
+                return response.text
         except Exception as e:
             print(f"Error during generation: {e}")
             raise
@@ -720,7 +775,7 @@ class QueryProcessor:
 
     def _expand_query(self, query: str) -> str:
         """
-        Expands the user query using Gemini Flash and hardcoded maps.
+        Expands the user query using OpenAI (reverted from Gemini) and hardcoded maps.
         """
         added_keywords = set()
         query_lower = query.lower()
@@ -749,20 +804,24 @@ class QueryProcessor:
         try:
             expansion_prompt = config.QUERY_EXPANSION_PROMPT.format(query=query)
 
-            # --- CHANGED: Use Gemini for expansion ---
-            # Initialize a temporary model instance for this synchronous call
-            model = genai.GenerativeModel(self.model_name)
+            # --- REVERTED: Use OpenAI for expansion ---
+            # We need a synchronous OpenAI client here since this runs in a thread executor
+            # and we don't want to mess with async loops inside it if possible,
+            # or we can just use the standard OpenAI client.
+            # The original code used self.client which was OpenAI(api_key=...)
+            # But in __init__ we removed self.client. Let's re-instantiate it locally or in __init__.
+            # For safety, let's instantiate locally.
+            
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-            # Generate content (blocking call is fine here since this method is run in thread executor)
-            response = model.generate_content(
-                expansion_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=config.EXPANSION_TEMPERATURE,
-                    max_output_tokens=config.EXPANSION_MAX_TOKENS,
-                ),
+            response = client.chat.completions.create(
+                model=config.EXPANSION_MODEL,
+                messages=[{"role": "user", "content": expansion_prompt}],
+                max_tokens=config.EXPANSION_MAX_TOKENS,
+                temperature=config.EXPANSION_TEMPERATURE,
             )
 
-            llm_keywords = response.text.strip()
+            llm_keywords = response.choices[0].message.content.strip()
 
             # Combine all three: Original Query + Manual Keywords + LLM Keywords
             expanded_query = f"{query} {manual_expansion} {llm_keywords}"
@@ -1442,42 +1501,42 @@ class QueryProcessor:
         # Call Gemini API with streaming (SYNCHRONOUSLY)
         try:
             print("Sending streaming request to Gemini API...")
-
-            model = genai.GenerativeModel(
-                model_name=self.model_name, system_instruction=system_instruction
-            )
-
-            # Import specific types needed for config
-            from google.generativeai.types import HarmCategory, HarmBlockThreshold
-
-            # CHANGE: Use generate_content (blocking), NOT generate_content_async
-            response = model.generate_content(
-                prompt_instructions,
-                stream=True,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=config.RESPONSE_TEMPERATURE,
-                    max_output_tokens=config.RESPONSE_MAX_TOKENS,
-                ),
-                # Add Safety Settings to prevent "Finish Reason: 3" on medical topics
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                },
-            )
-
-            print("Streaming response from Gemini API...")
-
-            # CHANGE: Standard for loop, NOT async for
-            for chunk in response:
-                if chunk.text:
-                    yield "data: " + json.dumps({"content": chunk.text}) + "\n\n"
-
-            # Send final done message
-            yield "data: " + json.dumps({"done": True}) + "\n\n"
-            print("Finished streaming response from Gemini API.")
-
+            if self.gemini_llm is not None:
+                # Use LangChain LLM streaming
+                messages = [SystemMessage(content=system_instruction), HumanMessage(content=prompt_instructions)]
+                for chunk in self.gemini_llm.stream(messages):
+                    # chunk has .content property on each partial response
+                    if getattr(chunk, "content", None):
+                        yield "data: " + json.dumps({"content": chunk.content}) + "\n\n"
+                # Send final done message
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                print("Finished streaming response from Gemini API.")
+            else:
+                # Fallback: raw genai Api
+                model = genai.GenerativeModel(
+                    model_name=self.model_name, system_instruction=system_instruction
+                )
+                from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                response = model.generate_content(
+                    prompt_instructions,
+                    stream=True,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=config.RESPONSE_TEMPERATURE,
+                        max_output_tokens=config.RESPONSE_MAX_TOKENS,
+                    ),
+                    safety_settings={
+                        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                    },
+                )
+                for chunk in response:
+                    if chunk.text:
+                        yield "data: " + json.dumps({"content": chunk.text}) + "\n\n"
+                # Send final done message
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                print("Finished streaming response from Gemini API.")
         except Exception as e:
             print(f"Error during Gemini API streaming call: {e}")
             yield "data: " + json.dumps(
